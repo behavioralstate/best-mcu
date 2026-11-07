@@ -37,9 +37,10 @@ impl Door {
 
     pub fn answer(&self, req: &Request) -> Response {
         match (req.method, req.path) {
-            ("GET", "/.well-known/best") => self.manifest(req),
+            // HEAD is answered as GET; the server leaves the body out.
+            ("GET" | "HEAD", "/.well-known/best") => self.manifest(req),
             (_, "/.well-known/best") => Response {
-                headers: vec![("Allow", "GET".into())],
+                headers: vec![("Allow", "GET, HEAD".into())],
                 ..error(405, "METHOD_NOT_ALLOWED", "the manifest is read with GET")
             },
             _ => error(
@@ -175,6 +176,21 @@ mod tests {
     }
 
     #[test]
+    fn head_is_answered_as_get_the_server_leaving_out_the_body() {
+        let d = door();
+        let head = |if_none_match| {
+            d.answer(&Request {
+                method: "HEAD",
+                path: "/.well-known/best",
+                if_none_match,
+            })
+        };
+        assert_eq!(head(None), d.answer(&get("/.well-known/best", None)));
+        let etag = head(None).headers[0].1.clone();
+        assert_eq!(head(Some(&etag)).status, 304);
+    }
+
+    #[test]
     fn what_is_not_served_is_refused_in_the_best_error_format_with_what_to_do() {
         let r = door().answer(&get("/nothing", None));
         assert_eq!(r.status, 404);
@@ -186,7 +202,7 @@ mod tests {
             if_none_match: None,
         });
         assert_eq!(r.status, 405);
-        assert_eq!(r.headers, vec![("Allow", "GET".to_string())]);
+        assert_eq!(r.headers, vec![("Allow", "GET, HEAD".to_string())]);
         let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(e["error"]["code"], "METHOD_NOT_ALLOWED");
     }

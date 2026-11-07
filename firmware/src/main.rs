@@ -46,7 +46,8 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     })?;
     let door = std::sync::Arc::new(door);
-    // Every method a client sends is the door's to answer, a refusal included, in the BEST error format.
+    // The methods HTTP defines for a resource like this one are the door's to answer, a refusal included, in the BEST
+    // error format; any other (PROPFIND, say) is refused by ESP-IDF itself, in plain text.
     let methods = [
         (Method::Get, "GET"),
         (Method::Head, "HEAD"),
