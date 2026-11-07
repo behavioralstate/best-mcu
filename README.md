@@ -15,7 +15,8 @@ it conformant (discovery only, since it offers no capability yet). What it costs
 
 | | |
 |---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; no Wi-Fi) | 781 KB, 4.8% of the flash |
+| Firmware image for QEMU (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door) | 781 KB, 4.8% of the flash |
+| … for the board, with Wi-Fi (built, not yet run) | 1.1 MB, 6.8% of the flash |
 | Internal RAM free at start | 364 KB |
 | … with the network up and the door served | 325 KB |
 | … least, after TLS handshakes | 261 KB |
