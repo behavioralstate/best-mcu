@@ -35,13 +35,16 @@ espflash save-image --chip esp32s3 --flash-size 16mb --merge "$elf" "$target/fla
 
 # ESP-IDF's tools, where scripts/env.sh has esp-idf-sys put them.
 tools="${ESP_IDF_TOOLS_INSTALL_DIR#custom:}"
-find_qemu() { ls "$tools"/tools/qemu-xtensa/*/qemu/bin/qemu-system-xtensa{,.exe} 2>/dev/null | head -1; }
+first() { for f in "$@"; do [ -e "$f" ] && { echo "$f"; return; }; done; true; }  # the first that exists, or none
+find_qemu() { first "$tools"/tools/qemu-xtensa/*/qemu/bin/qemu-system-xtensa{,.exe}; }
 qemu="$(find_qemu)"
 if [ -z "$qemu" ]; then
   idf="$(ls -d "$tools"/esp-idf/v* | tail -1)"
-  py="$(ls "$tools"/python_env/*/bin/python "$tools"/python_env/*/Scripts/python.exe 2>/dev/null | head -1)"
+  py="$(first "$tools"/python_env/*/bin/python "$tools"/python_env/*/Scripts/python.exe)"
+  [ -n "$py" ] || { echo "scripts/qemu.sh: ESP-IDF's Python is not in $tools/python_env"; exit 1; }
   IDF_TOOLS_PATH="$(win "$tools")" IDF_PATH="$(win "$idf")" "$py" "$(win "$idf/tools/idf_tools.py")" install qemu-xtensa
   qemu="$(find_qemu)"
+  [ -n "$qemu" ] || { echo "scripts/qemu.sh: QEMU is not in $tools/tools/qemu-xtensa after installing it"; exit 1; }
 fi
 
 serial="mon:stdio"

@@ -21,7 +21,7 @@ const NAME: &str = match option_env!("BEST_MCU_NAME") {
 };
 const ENDPOINT: &str = match option_env!("BEST_MCU_ENDPOINT") {
     Some(e) => e,
-    None => "https://localhost:8443",
+    None => "https://localhost",
 };
 
 /// The server's certificate and key, PEM with a closing NUL, made by `scripts/dev-cert.sh` and never committed.
@@ -46,14 +46,19 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     })?;
     let door = std::sync::Arc::new(door);
-    for method in [Method::Get, Method::Post] {
+    // Every method a client sends is the door's to answer, a refusal included, in the BEST error format.
+    let methods = [
+        (Method::Get, "GET"),
+        (Method::Head, "HEAD"),
+        (Method::Post, "POST"),
+        (Method::Put, "PUT"),
+        (Method::Patch, "PATCH"),
+        (Method::Delete, "DELETE"),
+        (Method::Options, "OPTIONS"),
+    ];
+    for (m, method) in methods {
         let door = door.clone();
-        server.fn_handler::<anyhow::Error, _>("/*", method, move |req| {
-            let method = match req.method() {
-                Method::Get => "GET",
-                Method::Post => "POST",
-                _ => "OTHER",
-            };
+        server.fn_handler::<anyhow::Error, _>("/*", m, move |req| {
             let path = req.uri().split('?').next().unwrap_or("/").to_string();
             let if_none_match = req.header("If-None-Match").map(str::to_string);
             let answer = door.answer(&Request {
@@ -64,7 +69,7 @@ fn main() -> anyhow::Result<()> {
             let mut headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
             headers.extend(answer.headers.iter().map(|(h, v)| (*h, v.as_str())));
             let mut resp = req.into_response(answer.status, None, &headers)?;
-            if let Some(body) = answer.body {
+            if let Some(body) = answer.body.filter(|_| method != "HEAD") {
                 resp.write_all(body.as_bytes())?;
             }
             Ok(())

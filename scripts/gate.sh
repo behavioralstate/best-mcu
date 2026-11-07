@@ -7,13 +7,14 @@
 #   scripts/gate.sh [fmt|clippy|test|board|qemu|all]      default: all
 #
 # Needs cargo with the esp toolchain (espup), espflash, ldproxy, node (npx) and curl; on Windows, Git Bash with the
-# MSVC Build Tools environment loaded. ESP_IDF_TOOLS_INSTALL_DIR and CARGO_TARGET_DIR are honoured where set. The
-# emulated door listens on 127.0.0.1:8447, away from scripts/qemu.sh's 8443, and is stopped at the end.
+# MSVC Build Tools environment loaded. ESP_IDF_TOOLS_INSTALL_DIR is honoured where set, CARGO_TARGET_DIR for every
+# build but QEMU's, which builds in BEST_MCU_QEMU_TARGET (scripts/qemu.sh). A certificate is made first when there is
+# none (scripts/dev-cert.sh). The emulated door listens on 127.0.0.1:8447, away from scripts/qemu.sh's 8443, and is
+# stopped at the end, Ctrl-C included.
 set -uo pipefail
 BEST_VALIDATE_VERSION=0.4.3
 
-cd "$(dirname "$0")/.."
-source scripts/env.sh
+cd "$(dirname "$0")/.." && source scripts/env.sh || { echo "GATE RED"; exit 1; }
 what="${1:-all}"
 case "$what" in
   fmt|clippy|test|board|qemu|all) ;;
@@ -30,11 +31,16 @@ step() {  # name command...: runs the command, keeps the verdict, never stops th
 wants() { [[ "$what" == all || "$what" == "$1" ]]; }
 
 fmt() { cargo fmt --all --check && (cd firmware && cargo fmt --check); }
+cert() { [ -f firmware/certs/cert.pem ] || scripts/dev-cert.sh; }  # the firmware embeds one, and git has none
 board() {  # The board's firmware, Wi-Fi included, built against a placeholder network: it is never flashed.
-  (cd firmware && BEST_MCU_WIFI_SSID=gate BEST_MCU_WIFI_PASSWORD=placeholder cargo build --release)
+  cert && (cd firmware && BEST_MCU_WIFI_SSID=gate BEST_MCU_WIFI_PASSWORD=placeholder cargo build --release)
 }
+pid=""
+stop() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; pid=""; }  # QEMU, or its build
+trap stop EXIT
+trap 'stop; echo "GATE RED"; exit 1' INT TERM
 qemu_lane() {
-  local log port=8447 pid ok=1
+  local log port=8447 ok=1
   log="$(mktemp)"
   BEST_MCU_QEMU_PORT=$port BEST_MCU_QEMU_SERIAL="$log" scripts/qemu.sh &
   pid=$!
@@ -54,7 +60,7 @@ qemu_lane() {
   else
     tail -20 "$log"
   fi
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  stop
   rm -f "$log" "$log.validate"
   [ "$ok" = 1 ]
 }

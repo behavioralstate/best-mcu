@@ -49,14 +49,23 @@ to accept it for this address alone (`curl -k`, or `NODE_TLS_REJECT_UNAUTHORIZED
 door's tests, the board's build, and best-validate against the door served in QEMU.
 
 On Windows, cargo runs inside the MSVC Build Tools environment (the host's build scripts link with it), and short
-paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp` and a `CARGO_TARGET_DIR` such as
-`D:/t/mcu` keep both short.
+paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp`, a `CARGO_TARGET_DIR` such as
+`D:/t/mcu` for the board's build and `BEST_MCU_QEMU_TARGET=D:/t/mcuq` for QEMU's keep them short.
 
 ## On the board
 
+A certificate for the name the board is reached at:
+
 ```bash
-BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
+scripts/dev-cert.sh robot.local
 ```
 
-from `firmware/`, with the board on USB: it is flashed and its serial log follows. The network's name and password
-are read when the firmware is built, and never committed.
+then, from `firmware/` with the board on USB:
+
+```bash
+BEST_MCU_NAME=robot.local BEST_MCU_ENDPOINT=https://robot.local BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
+```
+
+It is flashed and its serial log follows. The name and the endpoint are what the manifest says the door is reached
+at (`localhost` and `https://localhost` when unset); the network's name and password are read when the firmware is
+built, and never committed.

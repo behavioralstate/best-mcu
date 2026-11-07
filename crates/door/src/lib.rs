@@ -38,7 +38,10 @@ impl Door {
     pub fn answer(&self, req: &Request) -> Response {
         match (req.method, req.path) {
             ("GET", "/.well-known/best") => self.manifest(req),
-            (_, "/.well-known/best") => error(405, "METHOD_NOT_ALLOWED", "the manifest is read with GET"),
+            (_, "/.well-known/best") => Response {
+                headers: vec![("Allow", "GET".into())],
+                ..error(405, "METHOD_NOT_ALLOWED", "the manifest is read with GET")
+            },
             _ => error(
                 404,
                 "NOT_FOUND",
@@ -53,10 +56,12 @@ impl Door {
             ("ETag", self.etag.clone()),
             ("Cache-Control", "public, max-age=60".into()),
         ];
-        match req
-            .if_none_match
-            .is_some_and(|tags| tags.split(',').any(|t| t.trim() == self.etag))
-        {
+        // Compared weakly, as HTTP compares If-None-Match: `W/"x"` holds `"x"`, and `*` holds any.
+        let held = |t: &str| {
+            let t = t.trim();
+            t == "*" || t.strip_prefix("W/").unwrap_or(t) == self.etag
+        };
+        match req.if_none_match.is_some_and(|tags| tags.split(',').any(held)) {
             true => Response {
                 status: 304,
                 headers,
@@ -160,6 +165,16 @@ mod tests {
     }
 
     #[test]
+    fn a_weak_validator_or_any_matches_as_http_compares_if_none_match() {
+        let d = door();
+        let etag = d.answer(&get("/.well-known/best", None)).headers[0].1.clone();
+        for held in [format!("W/{etag}"), "*".to_string()] {
+            assert_eq!(d.answer(&get("/.well-known/best", Some(&held))).status, 304, "{held}");
+        }
+        assert_eq!(d.answer(&get("/.well-known/best", Some("W/\"other\""))).status, 200);
+    }
+
+    #[test]
     fn what_is_not_served_is_refused_in_the_best_error_format_with_what_to_do() {
         let r = door().answer(&get("/nothing", None));
         assert_eq!(r.status, 404);
@@ -171,5 +186,8 @@ mod tests {
             if_none_match: None,
         });
         assert_eq!(r.status, 405);
+        assert_eq!(r.headers, vec![("Allow", "GET".to_string())]);
+        let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
+        assert_eq!(e["error"]["code"], "METHOD_NOT_ALLOWED");
     }
 }
