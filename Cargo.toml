@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/door"]
+# The firmware builds for the board with the esp toolchain, from its own directory.
+exclude = ["firmware"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/behavioralstate/best-mcu"
+
+[workspace.dependencies]
+serde_json = "1"

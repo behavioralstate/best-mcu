@@ -1,0 +1,31 @@
+[package]
+name = "best-mcu"
+description = "The firmware: the door served over HTTPS from an ESP32-S3"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/behavioralstate/best-mcu"
+
+[[bin]]
+name = "best-mcu"
+harness = false
+
+[features]
+# The emulated Ethernet of Espressif's QEMU, in place of the board's Wi-Fi.
+qemu = []
+
+[dependencies]
+best-mcu-door = { path = "../crates/door" }
+esp-idf-svc = "0.53"
+log = "0.4"
+anyhow = "1"
+
+[build-dependencies]
+embuild = "0.33"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"

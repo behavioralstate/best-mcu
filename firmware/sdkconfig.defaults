@@ -1,0 +1,15 @@
+# The board: an ESP32-S3 with 16 MB of flash and 8 MB of octal PSRAM (N16R8).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# TLS needs room on the stacks that run it.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
+
+# The door is served over HTTPS.
+CONFIG_ESP_HTTPS_SERVER_ENABLE=y
+
+# Espressif's QEMU has no Wi-Fi: its emulated Ethernet stands in for it.
+CONFIG_ETH_USE_OPENETH=y

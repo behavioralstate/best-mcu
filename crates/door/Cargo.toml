@@ -1,0 +1,10 @@
+[package]
+name = "best-mcu-door"
+description = "The BEST door of a microcontroller: what it answers, apart from the board that serves it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
