@@ -33,22 +33,20 @@ Timings in QEMU say nothing of the board's, which are measured on it.
 
 ## Try it in QEMU
 
-Once: the esp toolchain (`cargo install espup espflash ldproxy`, then `espup install --targets esp32s3 --std`),
-ESP-IDF's QEMU (`idf_tools.py install qemu-xtensa`, after the first build has fetched ESP-IDF), and a certificate:
-
-```bash
-scripts/dev-cert.sh
-```
-
+Once: the esp toolchain (`cargo install espup espflash ldproxy`, then `espup install --targets esp32s3 --std`).
 Then, in Git Bash:
 
 ```bash
 scripts/qemu.sh
 ```
 
-It builds the firmware for the emulator and runs it; the serial log shows `the door is served at
-https://localhost:8443/.well-known/best`. The certificate is self-signed, so a client is told to accept it for this
-address alone (`curl -k`, or `NODE_TLS_REJECT_UNAUTHORIZED=0` for best-validate).
+It builds the firmware for the emulator and runs it; the first run fetches ESP-IDF and its QEMU into
+`firmware/.embuild`, and makes a self-signed certificate for `localhost` (`scripts/dev-cert.sh`). The serial log shows
+`the door is served at https://localhost:8443/.well-known/best`. The certificate is self-signed, so a client is told
+to accept it for this address alone (`curl -k`, or `NODE_TLS_REJECT_UNAUTHORIZED=0` for best-validate).
+
+`scripts/gate.sh all` is the proof a change is held to before it is pushed ([SDLC.md](SDLC.md)): fmt, clippy and the
+door's tests, the board's build, and best-validate against the door served in QEMU.
 
 On Windows, cargo runs inside the MSVC Build Tools environment (the host's build scripts link with it), and short
 paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp` and a `CARGO_TARGET_DIR` such as

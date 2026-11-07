@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # The esp toolchain for the firmware, which names it in firmware/rust-toolchain.toml; the door keeps stable.
+      - uses: esp-rs/xtensa-toolchain@v1.7.0
+        with:
+          buildtargets: esp32s3
+          ldproxy: true
+          override: false
+      - uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall -y espflash
+      # What Espressif's QEMU links against on Linux.
+      - run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # ESP-IDF, its tools and both firmware builds are fetched and built once, then kept.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            firmware/target
+            firmware/.embuild
+          key: esp-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'firmware/Cargo.lock', 'firmware/sdkconfig.defaults') }}
+          restore-keys: esp-${{ runner.os }}-
+
+      # The gate every maintainer runs before the push (SDLC.md section 3): the door's tests, the board's firmware
+      # built, and the door served from the emulated ESP32-S3 and validated over HTTPS. CI never needs a board.
+      - run: scripts/gate.sh all
