@@ -53,17 +53,17 @@ pub struct Registration {
 }
 
 impl Registration {
-    /// What the page shows of it: its state at `now`, an unanswered code that ran out read as expired.
+    /// What the page shows of it: its state at `now`, a code unanswered or uncollected when it ran out read as expired.
     pub fn state_at(&self, now: u64) -> State {
         match self.state {
-            State::Pending | State::Armed { .. } if now >= self.expires_ms => State::Expired,
+            State::Pending | State::Armed { .. } | State::Approved if now >= self.expires_ms => State::Expired,
             State::Armed { until_ms } if now >= until_ms => State::Pending,
             s => s,
         }
     }
 
     pub fn expired_at(&self, now: u64) -> bool {
-        matches!(self.state, State::Pending | State::Armed { .. }) && now >= self.expires_ms
+        matches!(self.state_at(now), State::Expired)
     }
 }
 
@@ -350,9 +350,14 @@ impl SignIn {
         self.credentials.retain(|c| c.hash != hash);
     }
 
-    /// Every credential is forgotten: each agent signs in again.
+    /// Every credential is forgotten, and every approval not yet collected is taken back: each agent signs in again.
     pub fn forget_credentials(&mut self) {
         self.credentials.clear();
+        for r in &mut self.registrations {
+            if r.state == State::Approved {
+                r.state = State::Denied;
+            }
+        }
     }
 
     /// Credentials held, and approvals that will become one.
@@ -362,7 +367,11 @@ impl SignIn {
             .iter()
             .filter(|c| c.expires_ms.is_none_or(|end| now < end))
             .count();
-        live + self.registrations.iter().filter(|r| r.state == State::Approved).count()
+        live + self
+            .registrations
+            .iter()
+            .filter(|r| r.state_at(now) == State::Approved)
+            .count()
     }
 
     /// A registration is kept for as long again as it lived, so a late poll still learns it expired; then it goes.
@@ -373,7 +382,7 @@ impl SignIn {
 }
 
 fn waits(r: &Registration, now: u64) -> bool {
-    matches!(r.state_at(now), State::Pending | State::Armed { .. } | State::Approved)
+    matches!(r.state_at(now), State::Pending | State::Armed { .. })
 }
 
 fn user_code(random: &mut dyn FnMut(&mut [u8])) -> String {

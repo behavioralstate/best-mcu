@@ -73,9 +73,3 @@ HTTP/1.1 401
 WWW-Authenticate: Bearer
 {"error":{"code":"UNAUTHORIZED","message":"a credential is required: Authorization: Bearer <token>, obtained by the sign-in the manifest's authentication block declares"}}
 ```
-
-## What best-cli could not do
-
-`best commands robot`, `best schema robot get-status` without `--kind`, and `best watch robot get-status` (after its
-first answer) stop with `NOT_FOUND`: best-cli 0.3.0 asks for `/commands` and `/events/stream` without reading the
-manifest, which declares neither. The board answers them as it should; the fix is best-cli's.

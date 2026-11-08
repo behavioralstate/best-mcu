@@ -130,11 +130,15 @@ impl Door {
         self.signin().press(self.ports.clock.now_ms())
     }
 
-    /// Every credential is forgotten, kept ones included: each agent signs in again.
+    /// Every credential is forgotten, kept ones included: each agent signs in again. When the vault cannot be
+    /// written, every credential is still refused from now on, but the kept ones come back on a restart: the error
+    /// says so.
     pub fn forget_credentials(&self) -> Result<(), String> {
         let mut s = self.signin();
         s.forget_credentials();
-        self.ports.vault.write(&s.kept())
+        self.ports.vault.write(&s.kept()).map_err(|e| {
+            format!("every credential is refused until the robot restarts, but the kept ones could not be erased: {e}")
+        })
     }
 
     /// The manifest, whole, with an ETag and a cache life so a client can tell it changed. An `If-None-Match` is
@@ -295,7 +299,12 @@ impl Door {
     }
 
     fn queries(&self, req: &Request) -> Response {
-        let token = req.authorization.and_then(|a| a.strip_prefix("Bearer ")).map(str::trim);
+        // The scheme is matched without regard to case (RFC 9110 §11.1).
+        let token = req
+            .authorization
+            .and_then(|a| a.trim().split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| token.trim());
         let now = self.ports.clock.now_ms();
         if !token.is_some_and(|t| self.signin().admits(now, t)) {
             return Response {
@@ -445,6 +454,8 @@ fn form(bytes: &[u8]) -> BTreeMap<String, String> {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
             (decode(k), decode(v))
         })
+        // A parameter without a value is read as omitted (RFC 6749 §3.1).
+        .filter(|(_, v)| !v.is_empty())
         .collect()
 }
 

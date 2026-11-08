@@ -16,6 +16,8 @@ use esp_idf_svc::sys;
 use esp_idf_svc::tls::X509;
 
 mod board;
+#[cfg(not(feature = "qemu"))]
+mod button;
 mod network;
 
 /// The name the door is known by and the address it is served at, set when the firmware is built.
@@ -71,7 +73,7 @@ fn main() -> anyhow::Result<()> {
     ));
     // QEMU emulates no button.
     #[cfg(not(feature = "qemu"))]
-    board::watch_button(peripherals.pins.gpio0, door.clone())?;
+    button::watch(peripherals.pins.gpio0, door.clone())?;
 
     let mut server = EspHttpServer::new(&Configuration {
         uri_match_wildcard: true,

@@ -427,10 +427,87 @@ fn the_page_shows_the_agent_s_words_escaped() {
 
 #[test]
 fn a_form_is_read_as_browsers_write_it() {
-    let f = form(b"a=1+2&b=%41%2b%zz&c&a=3");
+    let f = form(b"a=1+2&b=%41%2b%zz&c&d=&a=3");
     assert_eq!(f.get("a").map(String::as_str), Some("3"));
     assert_eq!(f.get("b").map(String::as_str), Some("A+%zz"));
-    assert_eq!(f.get("c").map(String::as_str), Some(""));
+    assert_eq!(
+        (f.get("c"), f.get("d")),
+        (None, None),
+        "a name without a value is omitted"
+    );
+}
+
+#[test]
+fn a_registration_s_empty_optional_parameters_are_read_as_omitted() {
+    let board = Board::default();
+    let door = board.door();
+    let t = signed_in(
+        &board,
+        &door,
+        "client_id=best&agent_label=&connection=&credential_lifetime=",
+    );
+    assert!(t.get("expires_in").is_none(), "durable, as when omitted");
+    assert_eq!(t["name"], "robot.example.com");
+}
+
+#[test]
+fn the_bearer_scheme_is_matched_without_regard_to_case() {
+    let board = Board::default();
+    let door = board.door();
+    let token = signed_in(&board, &door, "client_id=best")["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for scheme in ["Bearer", "bearer", "BEARER"] {
+        let auth = format!("{scheme} {token}");
+        assert_eq!(door.answer(&query("/queries", &auth)).status, 200, "{scheme}");
+    }
+}
+
+#[test]
+fn the_long_press_takes_back_an_approval_not_yet_collected() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=best");
+    approve(&door, reg["user_code"].as_str().unwrap());
+    assert!(door.press().is_some());
+    door.forget_credentials().unwrap();
+    board.wait(5);
+    assert_eq!(
+        json_of(&poll(&door, reg["device_code"].as_str().unwrap()))["error"],
+        "access_denied"
+    );
+}
+
+#[test]
+fn a_long_press_the_flash_cannot_keep_still_refuses_every_credential_and_says_so() {
+    let board = Board::default();
+    let door = board.door();
+    let t = signed_in(&board, &door, "client_id=best");
+    let token = format!("Bearer {}", t["access_token"].as_str().unwrap());
+    *board.vault_fails.lock().unwrap() = true;
+    let e = door.forget_credentials().unwrap_err();
+    assert!(e.contains("refused until the robot restarts"), "{e}");
+    assert_eq!(door.answer(&query("/queries", &token)).status, 401);
+}
+
+#[test]
+fn an_approval_frees_its_waiting_place_and_ends_with_the_code_s_time() {
+    let board = Board::default();
+    let door = board.door();
+    let mut approved = Vec::new();
+    for _ in 0..signin::WAITING {
+        let reg = register(&door, "client_id=best");
+        approve(&door, reg["user_code"].as_str().unwrap());
+        assert!(door.press().is_some());
+        approved.push(reg);
+    }
+    register(&door, "client_id=best");
+    board.wait(signin::EXPIRES_IN_S);
+    assert_eq!(
+        json_of(&poll(&door, approved[0]["device_code"].as_str().unwrap()))["error"],
+        "expired_token"
+    );
 }
 
 #[test]
