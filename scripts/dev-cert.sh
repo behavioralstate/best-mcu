@@ -3,20 +3,25 @@
 # It goes to firmware/certs, which git ignores; the key never leaves this machine. A board known by a real name
 # gets a real certificate for that name instead.
 #
-#   scripts/dev-cert.sh [name|address]      default: localhost; an address is IPv4: four numbers of 0 to 255, no
-#                                           leading zero
+#   scripts/dev-cert.sh [name|address]      default: localhost
+#
+# A name is a hostname of 64 characters at most (letters, digits, hyphens, dots); an address is IPv4, four numbers of
+# 0 to 255 with no leading zero. The pair is replaced only when both are made.
 set -euo pipefail
 name="${1:-localhost}"
-san="DNS:$name"
+refuse() { echo "scripts/dev-cert.sh: $name $1"; exit 1; }
 if [[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then  # a board reached by its address is named by it
   IFS=. read -r -a octets <<<"$name"
   for o in "${octets[@]}"; do
-    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( o <= 255 )) || {
-      echo "scripts/dev-cert.sh: $name is no IPv4 address: each of its four numbers is 0 to 255, with no leading zero"
-      exit 1
-    }
+    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( o <= 255 )) \
+      || refuse "is no IPv4 address: each of its four numbers is 0 to 255, with no leading zero"
   done
   san="IP:$name"
+else
+  label='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
+  [[ ${#name} -le 64 && "$name" =~ ^$label(\.$label)*$ ]] \
+    || refuse "is no hostname: 64 characters at most, labels of letters, digits and inner hyphens, joined by dots"
+  san="DNS:$name"
 fi
 dir="$(cd "$(dirname "$0")/.." && pwd)/firmware/certs"
 mkdir -p "$dir"
@@ -24,8 +29,11 @@ mkdir -p "$dir"
 out="$(cygpath -m "$dir" 2>/dev/null || echo "$dir")"
 MSYS_NO_PATHCONV=1 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 \
   -subj "/CN=$name" -addext "subjectAltName=$san" \
-  -keyout "$out/key.pem" -out "$out/cert.pem" 2>/dev/null
+  -keyout "$out/key.pem.new" -out "$out/cert.pem.new" 2>/dev/null \
+  || { rm -f "$dir/key.pem.new" "$dir/cert.pem.new"; refuse "was refused by openssl: no certificate was made"; }
 # ESP-IDF reads a PEM up to its closing NUL.
-printf '\0' >> "$dir/cert.pem"
-printf '\0' >> "$dir/key.pem"
+printf '\0' >> "$dir/cert.pem.new"
+printf '\0' >> "$dir/key.pem.new"
+mv "$dir/key.pem.new" "$dir/key.pem"
+mv "$dir/cert.pem.new" "$dir/cert.pem"
 echo "made $dir/cert.pem and key.pem for $name, good for 30 days"
