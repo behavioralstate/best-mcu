@@ -10,9 +10,11 @@ The board is an ESP32-S3 with 16 MB of flash and 8 MB of PSRAM (N16R8). The firm
 library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
-not serve in the BEST error format. It runs on the board, a Freenove ESP32-S3-WROOM-1 on Wi-Fi, as
-`https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in Espressif's QEMU: best-validate 0.4.3 finds
-it conformant on both, the board's certificate verified (discovery only, since it offers no capability yet).
+not serve in the BEST error format. An agent signs in with the device flow, approved by a press of the robot's BOOT
+button, and reads one query, `get-status`: the robot's uptime, free memory and Wi-Fi signal. It runs on the board, a
+Freenove ESP32-S3-WROOM-1 on Wi-Fi, as `https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in
+Espressif's QEMU: best-validate 0.4.3 finds it conformant on both, the board's certificate verified. best-cli signs in
+to the board and queries it: [acceptance/sign-in.md](acceptance/sign-in.md).
 
 ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
 GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
@@ -23,23 +25,27 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.7% |
-| Internal RAM free at start | 364 KB | 309 KB |
-| … with the network up and the door served | 324 KB | 236 KB |
-| … least, after TLS handshakes | 259 KB | 133 KB |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 833 KB, 5.1% of the flash | 1.1 MB, 7.1% |
+| Internal RAM free at start | 354 KB | 307 KB |
+| … with the network up and the door served | 311 KB | 226 KB |
+| … least, after TLS handshakes | 244 KB | 123 KB |
+| … least, while a person approves a sign-in in a browser and best-cli waits for it | | 60 KB |
 | PSRAM used | almost none | almost none |
 | The manifest read over a new connection, from a machine on the same network | | 0.9 to 1.2 s, the TLS handshake nearly all of it |
+| `best query robot get-status`: the manifest, the catalogue and the query, each over a new connection | | 1.1 to 1.6 s |
 
-The board's figures are with its Let's Encrypt chain, four certificates in 4.7 KB; with a self-signed certificate it
-keeps 240 KB with the door served and 151 KB at least, and reads the manifest in 0.7 to 1 s. Timings are the board's
-alone: QEMU's say nothing of them.
+The board's figures are with its Let's Encrypt chain, four certificates in 4.7 KB. Each open TLS connection holds
+some 30 KB of internal RAM, and the server keeps four open at most, so a sign-in, with a browser's connections and
+best-cli's at once, is what costs the board most. Timings are the board's alone: QEMU's say nothing of them.
 
 ## Layout
 
-- `crates/door`: the door, plain Rust: what each request is answered with. It knows nothing of the board, and its
-  tests run on any machine: `cargo test`.
+- `crates/door`: the door, plain Rust: what each request is answered with, the sign-in and its page, and the queries.
+  It knows nothing of the board: it is given a clock, a random generator, a vault for the credentials and the
+  board's readings, and its tests run on any machine with fakes of them: `cargo test`.
 - `firmware`: the board's side, built with the esp toolchain: the network (Wi-Fi, or QEMU's Ethernet with the `qemu`
-  feature), ESP-IDF's HTTPS server carrying requests to the door, and the memory report on the serial log.
+  feature), ESP-IDF's HTTPS server carrying requests to the door, the flash that keeps credentials, the BOOT button,
+  and the memory report on the serial log.
 
 ## Try it in QEMU
 
@@ -109,3 +115,23 @@ npx @behavioralstate/best-validate@0.4.3 https://robot.behavioralstate.io
 A board without a name is reached by its address instead, with a self-signed certificate for it
 (`scripts/dev-cert.sh 192.168.1.104`, endpoint `https://192.168.1.104`), and best-validate is told to accept it
 (`NODE_TLS_REJECT_UNAUTHORIZED=0`), as the gate does for QEMU.
+
+## Signing an agent in
+
+The manifest declares the device flow (RFC 8628): the agent asks the robot for a code and gives the person a link to
+the robot's own page, `/approve?code=...`, which shows who asks and the code. The person checks the code against what
+the agent shows and clicks Approve, then presses the robot's BOOT button within 30 seconds: the press is what approves,
+so only someone at the robot can let an agent in. Deny refuses it. With best-cli:
+
+```bash
+best login robot --manifest robot.behavioralstate.io
+```
+
+```bash
+best query robot get-status
+```
+
+A code lives 5 minutes, and four may wait at once. The robot keeps only a hash of each credential, eight at most. A
+durable credential (the default) is kept in the board's flash and survives a restart; a session credential lives 8
+hours and is forgotten on a restart. Holding BOOT for 10 seconds forgets every credential, and each agent signs in
+again. QEMU has no button, so an agent cannot be approved there: the door's tests prove the sign-in on any machine.

@@ -1,17 +1,21 @@
 //! The firmware: brings the network up, then serves the door over HTTPS. The door decides every answer
-//! (`best-mcu-door`); this file only carries requests to it and answers back, and reports the memory it takes.
+//! (`best-mcu-door`); this file only carries requests to it and answers back, gives it the board's ports
+//! ([`board`]), and reports the memory it takes.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use best_mcu_door::{Door, Request};
+use best_mcu_door::{Door, Ports, Request};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::server::{Configuration, EspHttpServer};
 use esp_idf_svc::http::Method;
-use esp_idf_svc::io::Write;
+use esp_idf_svc::io::{Read, Write};
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys;
 use esp_idf_svc::tls::X509;
 
+mod board;
 mod network;
 
 /// The name the door is known by and the address it is served at, set when the firmware is built.
@@ -41,6 +45,9 @@ macro_rules! certs {
 const CERT: &[u8] = include_bytes!(certs!("cert.pem"));
 const KEY: &[u8] = include_bytes!(certs!("key.pem"));
 
+/// The largest body the door reads: a sign-in form is a few hundred bytes.
+const BODY_LIMIT: usize = 4096;
+
 fn main() -> anyhow::Result<()> {
     sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -48,17 +55,30 @@ fn main() -> anyhow::Result<()> {
 
     let peripherals = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
-    let _network = network::up(peripherals, sysloop)?;
+    let nvs = EspDefaultNvsPartition::take()?;
+    let _network = network::up(peripherals.modem, peripherals.mac, sysloop, nvs.clone())?;
     report("network up");
 
-    let door = Door::new(NAME, ENDPOINT);
+    let door = Arc::new(Door::new(
+        NAME,
+        ENDPOINT,
+        Ports {
+            clock: Box::new(board::Board),
+            entropy: Box::new(board::Board),
+            vault: Box::new(board::Flash::open(nvs)?),
+            readings: Box::new(board::Board),
+        },
+    ));
+    // QEMU emulates no button.
+    #[cfg(not(feature = "qemu"))]
+    board::watch_button(peripherals.pins.gpio0, door.clone())?;
+
     let mut server = EspHttpServer::new(&Configuration {
         uri_match_wildcard: true,
         server_certificate: Some(X509::pem_until_nul(CERT)),
         private_key: Some(X509::pem_until_nul(KEY)),
         ..Default::default()
     })?;
-    let door = std::sync::Arc::new(door);
     // The methods HTTP defines for a resource like this one are the door's to answer, a refusal included, in the BEST
     // error format; any other (PROPFIND, say) is refused by ESP-IDF itself, in plain text.
     let methods = [
@@ -72,10 +92,23 @@ fn main() -> anyhow::Result<()> {
     ];
     for (m, method) in methods {
         let door = door.clone();
-        server.fn_handler::<anyhow::Error, _>("/*", m, move |req| {
-            let path = req.uri().split('?').next().unwrap_or("/").to_string();
-            let answer = door.answer(&Request { method, path: &path });
-            let mut headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
+        server.fn_handler::<anyhow::Error, _>("/*", m, move |mut req| {
+            let uri = req.uri().to_string();
+            let (path, query) = uri.split_once('?').unwrap_or((&uri, ""));
+            let authorization = req.header("Authorization").map(str::to_string);
+            let content_type = req.header("Content-Type").map(str::to_string);
+            let answer = match read_body(&mut req)? {
+                Some(body) => door.answer(&Request {
+                    method,
+                    path,
+                    query,
+                    authorization: authorization.as_deref(),
+                    content_type: content_type.as_deref(),
+                    body: &body,
+                }),
+                None => best_mcu_door::too_large(BODY_LIMIT),
+            };
+            let mut headers: Vec<(&str, &str)> = vec![("Content-Type", answer.content_type)];
             headers.extend(answer.headers.iter().map(|(h, v)| (*h, v.as_str())));
             let mut resp = req.into_response(answer.status, None, &headers)?;
             if let Some(body) = answer.body.filter(|_| method != "HEAD") {
@@ -93,14 +126,27 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// The request's body, or none when it is longer than [`BODY_LIMIT`].
+fn read_body<R: Read>(req: &mut R) -> anyhow::Result<Option<Vec<u8>>>
+where
+    R::Error: std::error::Error + Send + Sync + 'static,
+{
+    let mut body = Vec::new();
+    let mut chunk = [0u8; 512];
+    loop {
+        let n = req.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(Some(body));
+        }
+        if body.len() + n > BODY_LIMIT {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+}
+
 /// Logs the free heap, internal and in PSRAM, and the least it has been since start: the cost of what ran.
 fn report(when: &str) {
-    let (internal, internal_least, psram) = unsafe {
-        (
-            sys::heap_caps_get_free_size(sys::MALLOC_CAP_INTERNAL),
-            sys::heap_caps_get_minimum_free_size(sys::MALLOC_CAP_INTERNAL),
-            sys::heap_caps_get_free_size(sys::MALLOC_CAP_SPIRAM),
-        )
-    };
+    let (internal, internal_least, psram) = board::memory();
     log::info!("memory {when}: internal free {internal} (least {internal_least}), PSRAM free {psram}");
 }
