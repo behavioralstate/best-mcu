@@ -5,22 +5,25 @@
 #
 #   scripts/dev-cert.sh [name|address]      default: localhost
 #
-# A name is a hostname of 64 characters at most (letters, digits, hyphens, dots); an address is IPv4, four numbers of
-# 0 to 255 with no leading zero. The pair is replaced only when both are made.
+# A name is a hostname of 64 characters at most (labels of up to 63 letters, digits and inner hyphens, joined by
+# dots); an address, any name of digits and dots, is IPv4: four numbers of 0 to 255 with no leading zero. The pair is
+# replaced only when both are made.
 set -euo pipefail
-name="${1:-localhost}"
-refuse() { echo "scripts/dev-cert.sh: $name $1"; exit 1; }
-if [[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then  # a board reached by its address is named by it
+name="${1-localhost}"
+refuse() { echo "scripts/dev-cert.sh: '$name' $1"; exit 1; }
+if [[ "$name" =~ ^[0-9.]+$ ]]; then  # a board reached by its address is named by it
+  ipv4="is no IPv4 address: four numbers of 0 to 255, with no leading zero, joined by dots"
+  [[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || refuse "$ipv4"
   IFS=. read -r -a octets <<<"$name"
   for o in "${octets[@]}"; do
-    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( o <= 255 )) \
-      || refuse "is no IPv4 address: each of its four numbers is 0 to 255, with no leading zero"
+    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( o <= 255 )) || refuse "$ipv4"
   done
   san="IP:$name"
 else
-  label='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
+  label='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
   [[ ${#name} -le 64 && "$name" =~ ^$label(\.$label)*$ ]] \
-    || refuse "is no hostname: 64 characters at most, labels of letters, digits and inner hyphens, joined by dots"
+    || refuse "is no hostname: 64 characters at most, labels of up to 63 letters, digits and inner hyphens, \
+joined by dots"
   san="DNS:$name"
 fi
 dir="$(cd "$(dirname "$0")/.." && pwd)/firmware/certs"

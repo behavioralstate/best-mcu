@@ -63,8 +63,8 @@ paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp
 
 The board is flashed and read through its UART USB-C port (a CH343, which Windows names `USB-Enhanced-SERIAL CH343`).
 It joins a 2.4 GHz network only, whose name and password are read when the firmware is built and never committed.
-From `firmware/`, with the board on USB and a certificate made (`scripts/dev-cert.sh`, for `localhost` until the
-address is known):
+The certificates are made from the repository's root and the firmware is built from `firmware/`. With the board on USB
+and a certificate made (`scripts/dev-cert.sh`, for `localhost` until the address is known), from `firmware/`:
 
 ```bash
 BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
@@ -73,18 +73,20 @@ BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
 It is flashed and its serial log follows, showing the address the network gives it (`Wi-Fi up: IpInfo { ip: ... }`);
 a reservation on the router keeps it. The door is then built again to say where it is reached, with a certificate for
 that address. The name is the robot's own, under a domain its owner holds: the manifest keys its service by it,
-reversed (`io.behavioralstate.robot`).
+reversed (`io.behavioralstate.robot`). From the repository's root:
 
 ```bash
 scripts/dev-cert.sh 192.168.1.104
 ```
 
+then from `firmware/`:
+
 ```bash
 BEST_MCU_NAME=robot.behavioralstate.io BEST_MCU_ENDPOINT=https://192.168.1.104 BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
 ```
 
-The name and the endpoint are `localhost` and `https://localhost` when unset. best-validate is run against the board as
-the gate runs it against QEMU:
+The name and the endpoint are `localhost` and `https://localhost` when unset. best-validate is run against the board
+as the gate runs it against QEMU:
 
 ```bash
 NODE_TLS_REJECT_UNAUTHORIZED=0 npx @behavioralstate/best-validate@0.4.3 https://192.168.1.104
