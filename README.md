@@ -13,10 +13,10 @@ library on ESP-IDF.
 not serve in the BEST error format. It is proven in Espressif's QEMU, not yet on the board: best-validate 0.4.3 finds
 it conformant (discovery only, since it offers no capability yet).
 
-Two answers are the board's own, since ESP-IDF's HTTP server gives every answer without a body a length of 0, which
-HTTP allows only when it is the full answer's: `HEAD` on the manifest is refused with 405 (`Allow: GET`), though HTTP
-asks every server to support it, and a client sending `If-None-Match` is sent the manifest whole, never a 304. The
-ETag is still on it, so a client can tell it changed.
+ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
+GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
+it so the client can tell it changed; and `HEAD`, answered as GET is without the body, says `Content-Length: 0`. A
+client learns the manifest's length by reading it with GET.
 
 What it costs there:
 

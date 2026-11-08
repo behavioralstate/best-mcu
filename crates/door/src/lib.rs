@@ -35,10 +35,10 @@ impl Door {
 
     pub fn answer(&self, req: &Request) -> Response {
         match (req.method, req.path) {
-            // HEAD is refused: the server would give its answer a length of 0, where GET's is the manifest's.
-            ("GET", "/.well-known/best") => self.manifest(),
+            // HEAD is answered as GET; the server sends it without the body.
+            ("GET" | "HEAD", "/.well-known/best") => self.manifest(),
             (_, "/.well-known/best") => Response {
-                headers: vec![("Allow", "GET".into())],
+                headers: vec![("Allow", "GET, HEAD".into())],
                 ..error(405, "METHOD_NOT_ALLOWED", "the manifest is read with GET")
             },
             _ => error(
@@ -146,16 +146,23 @@ mod tests {
         assert_eq!(r.status, 404);
         let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(e["error"]["code"], "NOT_FOUND");
-        // HEAD too: ESP-IDF would give its answer a length of 0, where GET's is the manifest's.
-        for method in ["POST", "HEAD"] {
-            let r = door().answer(&Request {
-                method,
-                path: "/.well-known/best",
-            });
-            assert_eq!(r.status, 405, "{method}");
-            assert_eq!(r.headers, vec![("Allow", "GET".to_string())]);
-            let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
-            assert_eq!(e["error"]["code"], "METHOD_NOT_ALLOWED");
-        }
+        let r = door().answer(&Request {
+            method: "POST",
+            path: "/.well-known/best",
+        });
+        assert_eq!(r.status, 405);
+        assert_eq!(r.headers, vec![("Allow", "GET, HEAD".to_string())]);
+        let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
+        assert_eq!(e["error"]["code"], "METHOD_NOT_ALLOWED");
+    }
+
+    #[test]
+    fn head_on_the_manifest_is_answered_as_get_is() {
+        let d = door();
+        let head = d.answer(&Request {
+            method: "HEAD",
+            path: "/.well-known/best",
+        });
+        assert_eq!(head, d.answer(&get("/.well-known/best")));
     }
 }
