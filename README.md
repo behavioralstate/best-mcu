@@ -10,8 +10,9 @@ The board is an ESP32-S3 with 16 MB of flash and 8 MB of PSRAM (N16R8). The firm
 library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
-not serve in the BEST error format. It runs on the board, a Freenove ESP32-S3-WROOM-1 on Wi-Fi, as it does in
-Espressif's QEMU: best-validate 0.4.3 finds it conformant on both (discovery only, since it offers no capability yet).
+not serve in the BEST error format. It runs on the board, a Freenove ESP32-S3-WROOM-1 on Wi-Fi, as
+`https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in Espressif's QEMU: best-validate 0.4.3 finds
+it conformant on both, the board's certificate verified (discovery only, since it offers no capability yet).
 
 ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
 GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
@@ -22,14 +23,16 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.6% |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.7% |
 | Internal RAM free at start | 364 KB | 309 KB |
-| … with the network up and the door served | 324 KB | 240 KB |
-| … least, after TLS handshakes | 259 KB | 151 KB |
+| … with the network up and the door served | 324 KB | 236 KB |
+| … least, after TLS handshakes | 259 KB | 133 KB |
 | PSRAM used | almost none | almost none |
-| The manifest read over a new connection, from a machine on the same network | | 0.7 to 1 s, the TLS handshake nearly all of it |
+| The manifest read over a new connection, from a machine on the same network | | 0.9 to 1.2 s, the TLS handshake nearly all of it |
 
-Timings are the board's alone: QEMU's say nothing of them.
+The board's figures are with its Let's Encrypt chain, four certificates in 4.7 KB; with a self-signed certificate it
+keeps 240 KB with the door served and 151 KB at least, and reads the manifest in 0.7 to 1 s. Timings are the board's
+alone: QEMU's say nothing of them.
 
 ## Layout
 
@@ -64,30 +67,40 @@ paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp
 The board is flashed and read through its UART USB-C port (a CH343, which Windows names `USB-Enhanced-SERIAL CH343`).
 It joins a 2.4 GHz network only, whose name and password are read when the firmware is built and never committed.
 The certificates are made from the repository's root and the firmware is built from `firmware/`. With the board on USB
-and a certificate made (`scripts/dev-cert.sh`, for `localhost` until the address is known), from `firmware/`:
+and a certificate made (`scripts/dev-cert.sh`, for `localhost` until the board has its own), from `firmware/`:
 
 ```bash
 BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
 ```
 
 It is flashed and its serial log follows, showing the address the network gives it (`Wi-Fi up: IpInfo { ip: ... }`);
-a reservation on the router keeps it. The door is then built again to say where it is reached, with a certificate for
-that address. The name is the robot's own, under a domain its owner holds: the manifest keys its service by it,
-reversed (`io.behavioralstate.robot`). From the repository's root:
+a reservation on the router keeps it.
+
+The board is then given its name, under a domain its owner holds, and a real certificate for it. The manifest keys its
+service by the name reversed (`io.behavioralstate.robot`). The certificate is Let's Encrypt's, issued by the
+cert-manager of the owner's cluster over HTTP-01: while it is issued or renewed, the name is a CNAME to the cluster's
+load balancer, and a cert-manager `Certificate` for it (ECDSA P-256, in `behavioralstateprotocol`, secret
+`robot-tls`) keeps it renewed. From the repository's root, with kubectl on the cluster:
 
 ```bash
-scripts/dev-cert.sh 192.168.1.104
+scripts/cluster-cert.sh
 ```
 
 then from `firmware/`:
 
 ```bash
-BEST_MCU_NAME=robot.behavioralstate.io BEST_MCU_ENDPOINT=https://192.168.1.104 BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
+BEST_MCU_NAME=robot.behavioralstate.io BEST_MCU_ENDPOINT=https://robot.behavioralstate.io BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
 ```
 
-The name and the endpoint are `localhost` and `https://localhost` when unset. best-validate is run against the board
-as the gate runs it against QEMU:
+The name and the endpoint are `localhost` and `https://localhost` when unset. The certificate is built into the
+firmware, so each renewal is copied and flashed again the same way. Where the name resolves to the cluster, a machine
+on the board's network reaches the board by the name mapped to its address (its hosts file, or the router's DNS), and
+best-validate is run against it as any client runs it, the certificate verified:
 
 ```bash
-NODE_TLS_REJECT_UNAUTHORIZED=0 npx @behavioralstate/best-validate@0.4.3 https://192.168.1.104
+npx @behavioralstate/best-validate@0.4.3 https://robot.behavioralstate.io
 ```
+
+A board without a name is reached by its address instead, with a self-signed certificate for it
+(`scripts/dev-cert.sh 192.168.1.104`, endpoint `https://192.168.1.104`), and best-validate is told to accept it
+(`NODE_TLS_REJECT_UNAUTHORIZED=0`), as the gate does for QEMU.
