@@ -86,12 +86,8 @@ a reservation on the router keeps it.
 The board is then given its name, under a domain its owner holds, and a real certificate for it. The manifest keys its
 service by the name reversed (`io.behavioralstate.robot`). The certificate is Let's Encrypt's, issued by the
 cert-manager of the owner's cluster over HTTP-01: while it is issued or renewed, the name is a CNAME to the cluster's
-load balancer, and a cert-manager `Certificate` for it keeps it renewed, with a new ECDSA P-256 key each time. From
-the repository's root, with kubectl on the cluster:
-
-```bash
-kubectl apply -f cluster/robot-certificate.yaml
-```
+load balancer, and a cert-manager `Certificate` for it, kept with the cluster's own configuration, renews it with a
+new ECDSA P-256 key each time. From the repository's root, with kubectl on the cluster:
 
 ```bash
 scripts/cluster-cert.sh
