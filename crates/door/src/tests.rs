@@ -471,7 +471,10 @@ fn the_long_press_takes_back_an_approval_not_yet_collected() {
     let reg = register(&door, "client_id=best");
     approve(&door, reg["user_code"].as_str().unwrap());
     assert!(door.press().is_some());
+    let armed = register(&door, "client_id=other");
+    approve(&door, armed["user_code"].as_str().unwrap());
     door.forget_credentials().unwrap();
+    assert_eq!(door.press(), None, "the armed code is taken back too");
     board.wait(5);
     assert_eq!(
         json_of(&poll(&door, reg["device_code"].as_str().unwrap()))["error"],

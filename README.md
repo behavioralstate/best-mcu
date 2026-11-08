@@ -131,7 +131,9 @@ best login robot --manifest robot.behavioralstate.io
 best query robot get-status
 ```
 
-A code lives 5 minutes, and four may wait at once. The robot keeps only a hash of each credential, eight at most. A
-durable credential (the default) is kept in the board's flash and survives a restart; a session credential lives 8
-hours and is forgotten on a restart. Holding BOOT for 10 seconds forgets every credential, and each agent signs in
-again. QEMU has no button, so an agent cannot be approved there: the door's tests prove the sign-in on any machine.
+A code lives 5 minutes, approved or not: an agent that collects its credential later is told the code expired. Four
+codes may wait for the person at once; an approved one no longer counts among them. The robot keeps only a hash of
+each credential, eight at most. A durable credential (the default) is kept in the board's flash and survives a
+restart; a session credential lives 8 hours and is forgotten on a restart. Holding BOOT for 10 seconds forgets every
+credential and takes back every code armed or approved but not yet collected, so each agent signs in again. QEMU has
+no button, so an agent cannot be approved there: the door's tests prove the sign-in on any machine.

@@ -445,7 +445,8 @@ fn form_of(req: &Request) -> Result<BTreeMap<String, String>, OAuthError> {
     Ok(form(req.body))
 }
 
-/// `application/x-www-form-urlencoded`, read as WHATWG does: the last of a repeated name wins.
+/// `application/x-www-form-urlencoded`, read as WHATWG does, with a name without a value read as omitted (RFC 6749
+/// §3.1): of a repeated name, the last with a value wins.
 fn form(bytes: &[u8]) -> BTreeMap<String, String> {
     String::from_utf8_lossy(bytes)
         .split('&')

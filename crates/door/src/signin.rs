@@ -230,7 +230,11 @@ impl SignIn {
         }
         match r.state {
             State::Redeemed | State::Expired => Err(unknown()),
-            State::Denied => Err(oauth("access_denied", "the person denied this sign-in")),
+            State::Denied => Err(oauth(
+                "access_denied",
+                "the sign-in was denied on the robot, or taken back by holding its button to forget every credential: \
+                 register again if the person wants you in",
+            )),
             State::Pending | State::Armed { .. } => {
                 let early = r.last_poll_ms.is_some_and(|last| now < last + r.interval_ms);
                 r.last_poll_ms = Some(now);
@@ -350,11 +354,12 @@ impl SignIn {
         self.credentials.retain(|c| c.hash != hash);
     }
 
-    /// Every credential is forgotten, and every approval not yet collected is taken back: each agent signs in again.
+    /// Every credential is forgotten, and every code armed or approved but not yet collected is taken back, as a
+    /// denial: each agent signs in again.
     pub fn forget_credentials(&mut self) {
         self.credentials.clear();
         for r in &mut self.registrations {
-            if r.state == State::Approved {
+            if matches!(r.state, State::Approved | State::Armed { .. }) {
                 r.state = State::Denied;
             }
         }

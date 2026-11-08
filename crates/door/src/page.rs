@@ -57,7 +57,7 @@ fn about(r: &Registration, now: u64) -> String {
         State::Approved | State::Redeemed => "<p>Approved. The agent collects its credential by itself; you can \
                                                close this page.</p>"
             .into(),
-        State::Denied => "<p>Denied. The agent is told so.</p>".into(),
+        State::Denied => "<p>Denied, or taken back by holding the robot's button. The agent is told so.</p>".into(),
         State::Expired => "<p>This code is past its time. Ask the agent to sign in again.</p>".into(),
     };
     who + &what
