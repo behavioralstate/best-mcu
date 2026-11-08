@@ -10,26 +10,26 @@ The board is an ESP32-S3 with 16 MB of flash and 8 MB of PSRAM (N16R8). The firm
 library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
-not serve in the BEST error format. It is proven in Espressif's QEMU, not yet on the board: best-validate 0.4.3 finds
-it conformant (discovery only, since it offers no capability yet).
+not serve in the BEST error format. It runs on the board, a Freenove ESP32-S3-WROOM-1 on Wi-Fi, as it does in
+Espressif's QEMU: best-validate 0.4.3 finds it conformant on both (discovery only, since it offers no capability yet).
 
 ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
 GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
 it so the client can tell it changed; and `HEAD`, answered as GET is without the body, says `Content-Length: 0`. A
 client learns the manifest's length by reading it with GET.
 
-What it costs there:
+What it costs:
 
-| | |
-|---|---|
-| Firmware image for QEMU (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door) | 776 KB, 4.7% of the flash |
-| … for the board, with Wi-Fi (built, not yet run) | 1.1 MB, 6.8% of the flash |
-| Internal RAM free at start | 364 KB |
-| … with the network up and the door served | 324 KB |
-| … least, after TLS handshakes | 259 KB |
-| PSRAM used | almost none |
+| | QEMU | The board |
+|---|---|---|
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.8% |
+| Internal RAM free at start | 364 KB | 309 KB |
+| … with the network up and the door served | 324 KB | 240 KB |
+| … least, after TLS handshakes | 259 KB | 151 KB |
+| PSRAM used | almost none | almost none |
+| The manifest read over a new connection, from a machine on the same network | | 0.7 to 1 s, the TLS handshake nearly all of it |
 
-Timings in QEMU say nothing of the board's, which are measured on it.
+Timings are the board's alone: QEMU's say nothing of them.
 
 ## Layout
 
@@ -61,18 +61,26 @@ paths help: ESP-IDF's build nests deep. `ESP_IDF_TOOLS_INSTALL_DIR=custom:D:/esp
 
 ## On the board
 
-A certificate for the name the board is reached at:
+The board is flashed and read through its UART USB-C port (a CH343, which Windows names `USB-Enhanced-SERIAL CH343`).
+It joins a 2.4 GHz network only. It is reached by the address the network gives it, which its serial log shows
+(`Wi-Fi up: IpInfo { ip: ... }`); a reservation on the router keeps the address. The door is built for that address,
+with a certificate for it:
 
 ```bash
-scripts/dev-cert.sh robot.local
+scripts/dev-cert.sh 192.168.1.104
 ```
 
 then, from `firmware/` with the board on USB:
 
 ```bash
-BEST_MCU_NAME=robot.local BEST_MCU_ENDPOINT=https://robot.local BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
+BEST_MCU_NAME=192.168.1.104 BEST_MCU_ENDPOINT=https://192.168.1.104 BEST_MCU_WIFI_SSID=... BEST_MCU_WIFI_PASSWORD=... cargo run --release
 ```
 
 It is flashed and its serial log follows. The name and the endpoint are what the manifest says the door is reached
 at (`localhost` and `https://localhost` when unset); the network's name and password are read when the firmware is
-built, and never committed.
+built, and never committed. The first build, before the address is known, needs only the network's. best-validate is
+run against it as the gate runs it against QEMU:
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx @behavioralstate/best-validate@0.4.3 https://192.168.1.104
+```

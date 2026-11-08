@@ -3,15 +3,17 @@
 # It goes to firmware/certs, which git ignores; the key never leaves this machine. A board known by a real name
 # gets a real certificate for that name instead.
 #
-#   scripts/dev-cert.sh [name]      default: localhost
+#   scripts/dev-cert.sh [name|address]      default: localhost
 set -euo pipefail
 name="${1:-localhost}"
+san="DNS:$name"
+[[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && san="IP:$name"  # a board reached by its address is named by it
 dir="$(cd "$(dirname "$0")/.." && pwd)/firmware/certs"
 mkdir -p "$dir"
 # A Windows openssl reads a Windows path: the subject below must not be converted, so the path is given as one.
 out="$(cygpath -m "$dir" 2>/dev/null || echo "$dir")"
 MSYS_NO_PATHCONV=1 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 \
-  -subj "/CN=$name" -addext "subjectAltName=DNS:$name" \
+  -subj "/CN=$name" -addext "subjectAltName=$san" \
   -keyout "$out/key.pem" -out "$out/cert.pem" 2>/dev/null
 # ESP-IDF reads a PEM up to its closing NUL.
 printf '\0' >> "$dir/cert.pem"
