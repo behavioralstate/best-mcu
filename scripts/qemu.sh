@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the firmware for Espressif's QEMU and runs it there: the door on https://localhost:8443, its serial log on
-# the terminal; Ctrl-C ends it. A certificate is made first when there is none (scripts/dev-cert.sh).
+# the terminal; Ctrl-C ends it. Its certificate is QEMU's own, in firmware/certs/qemu, self-signed for localhost and
+# made first when there is none (scripts/dev-cert.sh): the board's, in firmware/certs, never goes into it.
 #
 # What the emulator needs, and why:
 # - only the components the door uses: esp_adc calibrates the chip's ADC at start, which QEMU does not emulate, and
@@ -25,7 +26,7 @@ export BEST_MCU_ENDPOINT="https://localhost:$port"
 export ESP_IDF_COMPONENTS="main;driver;spiffs;fatfs;esp_https_server;esp_http_server;esp_eth;esp_netif;lwip;mbedtls;nvs_flash;pthread;esp_psram;vfs;esp_timer;log;freertos"
 win() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
 
-[ -f "$here/firmware/certs/cert.pem" ] || "$here/scripts/dev-cert.sh"
+[ -f "$here/firmware/certs/qemu/cert.pem" ] || BEST_MCU_CERT_DIR="$here/firmware/certs/qemu" "$here/scripts/dev-cert.sh"
 (cd "$here/firmware" && cargo build --release --features qemu)
 elf="$target/xtensa-esp32s3-espidf/release/best-mcu"
 espflash save-image --chip esp32s3 --flash-size 16mb --merge "$elf" "$target/flash.bin" >/dev/null

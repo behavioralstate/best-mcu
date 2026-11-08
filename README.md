@@ -51,7 +51,8 @@ scripts/qemu.sh
 ```
 
 It builds the firmware for the emulator and runs it; the first run fetches ESP-IDF and its QEMU into
-`firmware/.embuild`, and makes a self-signed certificate for `localhost` (`scripts/dev-cert.sh`). The serial log shows
+`firmware/.embuild`, and makes a self-signed certificate for `localhost` in `firmware/certs/qemu`, apart from the
+board's (`scripts/dev-cert.sh`). The serial log shows
 `the door is served at https://localhost:8443/.well-known/best`. The certificate is self-signed, so a client is told
 to accept it for this address alone (`curl -k`, or `NODE_TLS_REJECT_UNAUTHORIZED=0` for best-validate).
 
@@ -79,8 +80,12 @@ a reservation on the router keeps it.
 The board is then given its name, under a domain its owner holds, and a real certificate for it. The manifest keys its
 service by the name reversed (`io.behavioralstate.robot`). The certificate is Let's Encrypt's, issued by the
 cert-manager of the owner's cluster over HTTP-01: while it is issued or renewed, the name is a CNAME to the cluster's
-load balancer, and a cert-manager `Certificate` for it (ECDSA P-256, in `behavioralstateprotocol`, secret
-`robot-tls`) keeps it renewed. From the repository's root, with kubectl on the cluster:
+load balancer, and a cert-manager `Certificate` for it keeps it renewed, with a new ECDSA P-256 key each time. From
+the repository's root, with kubectl on the cluster:
+
+```bash
+kubectl apply -f cluster/robot-certificate.yaml
+```
 
 ```bash
 scripts/cluster-cert.sh

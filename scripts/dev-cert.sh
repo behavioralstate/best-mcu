@@ -5,6 +5,8 @@
 #
 #   scripts/dev-cert.sh [name|address]      default: localhost
 #
+# BEST_MCU_CERT_DIR  where the pair goes (default: firmware/certs, the board's; QEMU's is firmware/certs/qemu)
+#
 # A name is a hostname of 64 characters at most (labels of up to 63 letters, digits and inner hyphens, joined by
 # dots); an address, any name of digits and dots, is IPv4: four numbers of 0 to 255 with no leading zero. The pair is
 # replaced only when both are made.
@@ -27,7 +29,7 @@ else
 joined by dots"
   san="DNS:$name"
 fi
-dir="$(cd "$(dirname "$0")/.." && pwd)/firmware/certs"
+dir="${BEST_MCU_CERT_DIR:-$(cd "$(dirname "$0")/.." && pwd)/firmware/certs}"
 mkdir -p "$dir"
 # A Windows openssl reads a Windows path: the subject below must not be converted, so the path is given as one.
 out="$(cygpath -m "$dir" 2>/dev/null || echo "$dir")"

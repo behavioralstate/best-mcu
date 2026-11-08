@@ -24,9 +24,22 @@ const ENDPOINT: &str = match option_env!("BEST_MCU_ENDPOINT") {
     None => "https://localhost",
 };
 
-/// The server's certificate and key, PEM with a closing NUL, made by `scripts/dev-cert.sh` and never committed.
-const CERT: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/cert.pem"));
-const KEY: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/key.pem"));
+/// The server's certificate and key, PEM with a closing NUL, never committed: the board's in `certs`
+/// (`scripts/cluster-cert.sh`, or `scripts/dev-cert.sh`), QEMU's in `certs/qemu`, self-signed for localhost.
+#[cfg(not(feature = "qemu"))]
+macro_rules! certs {
+    ($file:literal) => {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/certs/", $file)
+    };
+}
+#[cfg(feature = "qemu")]
+macro_rules! certs {
+    ($file:literal) => {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/certs/qemu/", $file)
+    };
+}
+const CERT: &[u8] = include_bytes!(certs!("cert.pem"));
+const KEY: &[u8] = include_bytes!(certs!("key.pem"));
 
 fn main() -> anyhow::Result<()> {
     sys::link_patches();

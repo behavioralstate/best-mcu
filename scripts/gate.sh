@@ -10,8 +10,8 @@
 # Needs cargo with the esp toolchain (espup), espflash, ldproxy, node (npx) and curl; on Windows, Git Bash with the
 # MSVC Build Tools environment loaded. ESP_IDF_TOOLS_INSTALL_DIR is honoured where set, CARGO_TARGET_DIR for every
 # build but QEMU's, which builds in BEST_MCU_QEMU_TARGET (scripts/qemu.sh). A certificate is made first when there is
-# none (scripts/dev-cert.sh). The emulated door listens on 127.0.0.1:8447, away from scripts/qemu.sh's 8443, and is
-# stopped at the end, Ctrl-C included.
+# none (scripts/dev-cert.sh), the board's and QEMU's each in its own folder. The emulated door listens on
+# 127.0.0.1:8447, away from scripts/qemu.sh's 8443, and is stopped at the end, Ctrl-C included.
 set -uo pipefail
 BEST_VALIDATE_VERSION=0.4.3
 

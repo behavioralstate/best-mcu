@@ -18,8 +18,11 @@ for part in crt key; do
 done
 mv "$dir/crt.new" "$dir/cert.pem.new"
 mv "$dir/key.new" "$dir/key.pem.new"
-[ "$(openssl x509 -in "$dir/cert.pem.new" -noout -pubkey | openssl md5)" = \
-  "$(openssl pkey -in "$dir/key.pem.new" -pubout | openssl md5)" ] || refuse "the key in $ns/$secret does not match its certificate"
+cert_pub="$(openssl x509 -in "$dir/cert.pem.new" -noout -pubkey 2>/dev/null)" \
+  || refuse "tls.crt in $ns/$secret is no PEM certificate openssl reads"
+key_pub="$(openssl pkey -in "$dir/key.pem.new" -pubout 2>/dev/null)" \
+  || refuse "tls.key in $ns/$secret is no PEM key openssl reads"
+[ "$cert_pub" = "$key_pub" ] || refuse "the key in $ns/$secret does not match its certificate"
 # ESP-IDF reads a PEM up to its closing NUL.
 printf '\0' >> "$dir/cert.pem.new"
 printf '\0' >> "$dir/key.pem.new"
