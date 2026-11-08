@@ -3,11 +3,21 @@
 # It goes to firmware/certs, which git ignores; the key never leaves this machine. A board known by a real name
 # gets a real certificate for that name instead.
 #
-#   scripts/dev-cert.sh [name|address]      default: localhost
+#   scripts/dev-cert.sh [name|address]      default: localhost; an address is IPv4: four numbers of 0 to 255, no
+#                                           leading zero
 set -euo pipefail
 name="${1:-localhost}"
 san="DNS:$name"
-[[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && san="IP:$name"  # a board reached by its address is named by it
+if [[ "$name" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then  # a board reached by its address is named by it
+  IFS=. read -r -a octets <<<"$name"
+  for o in "${octets[@]}"; do
+    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( o <= 255 )) || {
+      echo "scripts/dev-cert.sh: $name is no IPv4 address: each of its four numbers is 0 to 255, with no leading zero"
+      exit 1
+    }
+  done
+  san="IP:$name"
+fi
 dir="$(cd "$(dirname "$0")/.." && pwd)/firmware/certs"
 mkdir -p "$dir"
 # A Windows openssl reads a Windows path: the subject below must not be converted, so the path is given as one.

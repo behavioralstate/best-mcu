@@ -22,7 +22,7 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.8% |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 776 KB, 4.7% of the flash | 1.1 MB, 6.6% |
 | Internal RAM free at start | 364 KB | 309 KB |
 | … with the network up and the door served | 324 KB | 240 KB |
 | … least, after TLS handshakes | 259 KB | 151 KB |
