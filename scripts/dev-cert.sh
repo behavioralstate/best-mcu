@@ -9,6 +9,7 @@
 # dots); an address, any name of digits and dots, is IPv4: four numbers of 0 to 255 with no leading zero. The pair is
 # replaced only when both are made.
 set -euo pipefail
+[ $# -le 1 ] || { echo "scripts/dev-cert.sh: one name or address at most: scripts/dev-cert.sh [name|address]"; exit 1; }
 name="${1-localhost}"
 refuse() { echo "scripts/dev-cert.sh: '$name' $1"; exit 1; }
 if [[ "$name" =~ ^[0-9.]+$ ]]; then  # a board reached by its address is named by it
