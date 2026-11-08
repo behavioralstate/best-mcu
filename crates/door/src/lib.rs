@@ -135,7 +135,7 @@ impl Door {
     /// says so.
     pub fn forget_credentials(&self) -> Result<(), String> {
         let mut s = self.signin();
-        s.forget_credentials();
+        s.forget_credentials(self.ports.clock.now_ms());
         self.ports.vault.write(&s.kept()).map_err(|e| {
             format!("every credential is refused until the robot restarts, but the kept ones could not be erased: {e}")
         })

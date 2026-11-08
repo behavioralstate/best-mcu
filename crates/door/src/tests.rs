@@ -483,6 +483,35 @@ fn the_long_press_takes_back_an_approval_not_yet_collected() {
 }
 
 #[test]
+fn the_long_press_leaves_a_code_whose_arming_lapsed_waiting_for_the_person() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=best");
+    approve(&door, reg["user_code"].as_str().unwrap());
+    board.wait(40);
+    door.forget_credentials().unwrap();
+    assert_eq!(
+        json_of(&poll(&door, reg["device_code"].as_str().unwrap()))["error"],
+        "authorization_pending"
+    );
+}
+
+#[test]
+fn the_long_press_leaves_an_approval_that_ran_out_expired() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=best");
+    approve(&door, reg["user_code"].as_str().unwrap());
+    assert!(door.press().is_some());
+    board.wait(310);
+    door.forget_credentials().unwrap();
+    assert_eq!(
+        json_of(&poll(&door, reg["device_code"].as_str().unwrap()))["error"],
+        "expired_token"
+    );
+}
+
+#[test]
 fn a_long_press_the_flash_cannot_keep_still_refuses_every_credential_and_says_so() {
     let board = Board::default();
     let door = board.door();

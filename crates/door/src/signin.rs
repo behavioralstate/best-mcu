@@ -354,12 +354,12 @@ impl SignIn {
         self.credentials.retain(|c| c.hash != hash);
     }
 
-    /// Every credential is forgotten, and every code armed or approved but not yet collected is taken back, as a
-    /// denial: each agent signs in again.
-    pub fn forget_credentials(&mut self) {
+    /// Every credential is forgotten, and every code armed or approved at `now` but not yet collected is taken back,
+    /// as a denial: each agent signs in again.
+    pub fn forget_credentials(&mut self, now: u64) {
         self.credentials.clear();
         for r in &mut self.registrations {
-            if matches!(r.state, State::Approved | State::Armed { .. }) {
+            if matches!(r.state_at(now), State::Approved | State::Armed { .. }) {
                 r.state = State::Denied;
             }
         }
