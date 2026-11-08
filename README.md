@@ -11,15 +11,22 @@ library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
 not serve in the BEST error format. It is proven in Espressif's QEMU, not yet on the board: best-validate 0.4.3 finds
-it conformant (discovery only, since it offers no capability yet). What it costs there:
+it conformant (discovery only, since it offers no capability yet).
+
+Two answers are the board's own, since ESP-IDF's HTTP server gives every answer without a body a length of 0, which
+HTTP allows only when it is the full answer's: `HEAD` on the manifest is refused with 405 (`Allow: GET`), though HTTP
+asks every server to support it, and a client sending `If-None-Match` is sent the manifest whole, never a 304. The
+ETag is still on it, so a client can tell it changed.
+
+What it costs there:
 
 | | |
 |---|---|
-| Firmware image for QEMU (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door) | 781 KB, 4.8% of the flash |
+| Firmware image for QEMU (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door) | 776 KB, 4.7% of the flash |
 | … for the board, with Wi-Fi (built, not yet run) | 1.1 MB, 6.8% of the flash |
 | Internal RAM free at start | 364 KB |
-| … with the network up and the door served | 325 KB |
-| … least, after TLS handshakes | 261 KB |
+| … with the network up and the door served | 324 KB |
+| … least, after TLS handshakes | 259 KB |
 | PSRAM used | almost none |
 
 Timings in QEMU say nothing of the board's, which are measured on it.

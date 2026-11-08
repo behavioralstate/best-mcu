@@ -10,8 +10,6 @@ pub const BEST_VERSION: &str = "0.9.20";
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
-    /// The `If-None-Match` header, when the client sent one.
-    pub if_none_match: Option<&'a str>,
 }
 
 /// An answer: its status, its headers beyond the content type, and its JSON body, if any.
@@ -38,7 +36,7 @@ impl Door {
     pub fn answer(&self, req: &Request) -> Response {
         match (req.method, req.path) {
             // HEAD is refused: the server would give its answer a length of 0, where GET's is the manifest's.
-            ("GET", "/.well-known/best") => self.manifest(req),
+            ("GET", "/.well-known/best") => self.manifest(),
             (_, "/.well-known/best") => Response {
                 headers: vec![("Allow", "GET".into())],
                 ..error(405, "METHOD_NOT_ALLOWED", "the manifest is read with GET")
@@ -51,28 +49,17 @@ impl Door {
         }
     }
 
-    /// The manifest, with an ETag and a cache life so a client can tell it changed without reading it again.
-    fn manifest(&self, req: &Request) -> Response {
-        let headers = vec![
-            ("ETag", self.etag.clone()),
-            ("Cache-Control", "public, max-age=60".into()),
-        ];
-        // Compared weakly, as HTTP compares If-None-Match: `W/"x"` holds `"x"`, and `*` holds any.
-        let held = |t: &str| {
-            let t = t.trim();
-            t == "*" || t.strip_prefix("W/").unwrap_or(t) == self.etag
-        };
-        match req.if_none_match.is_some_and(|tags| tags.split(',').any(held)) {
-            true => Response {
-                status: 304,
-                headers,
-                body: None,
-            },
-            false => Response {
-                status: 200,
-                headers,
-                body: Some(self.manifest.clone()),
-            },
+    /// The manifest, whole, with an ETag and a cache life so a client can tell it changed. An `If-None-Match` is
+    /// not answered with 304, which HTTP lets a server do: the server would give a 304 a length of 0, where HTTP
+    /// allows it none or the manifest's.
+    fn manifest(&self) -> Response {
+        Response {
+            status: 200,
+            headers: vec![
+                ("ETag", self.etag.clone()),
+                ("Cache-Control", "public, max-age=60".into()),
+            ],
+            body: Some(self.manifest.clone()),
         }
     }
 }
@@ -127,12 +114,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
-    fn get<'a>(path: &'a str, if_none_match: Option<&'a str>) -> Request<'a> {
-        Request {
-            method: "GET",
-            path,
-            if_none_match,
-        }
+    fn get(path: &str) -> Request<'_> {
+        Request { method: "GET", path }
     }
 
     fn door() -> Door {
@@ -141,7 +124,7 @@ mod tests {
 
     #[test]
     fn the_manifest_is_public_json_under_the_reversed_name_with_an_etag_and_a_cache_life() {
-        let r = door().answer(&get("/.well-known/best", None));
+        let r = door().answer(&get("/.well-known/best"));
         assert_eq!(r.status, 200);
         let m: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(m["best"]["version"], BEST_VERSION);
@@ -158,26 +141,8 @@ mod tests {
     }
 
     #[test]
-    fn a_client_holding_the_manifest_is_told_it_has_not_changed() {
-        let d = door();
-        let etag = d.answer(&get("/.well-known/best", None)).headers[0].1.clone();
-        let r = d.answer(&get("/.well-known/best", Some(&format!("\"other\", {etag}"))));
-        assert_eq!((r.status, r.body), (304, None));
-    }
-
-    #[test]
-    fn a_weak_validator_or_any_matches_as_http_compares_if_none_match() {
-        let d = door();
-        let etag = d.answer(&get("/.well-known/best", None)).headers[0].1.clone();
-        for held in [format!("W/{etag}"), "*".to_string()] {
-            assert_eq!(d.answer(&get("/.well-known/best", Some(&held))).status, 304, "{held}");
-        }
-        assert_eq!(d.answer(&get("/.well-known/best", Some("W/\"other\""))).status, 200);
-    }
-
-    #[test]
     fn what_is_not_served_is_refused_in_the_best_error_format_with_what_to_do() {
-        let r = door().answer(&get("/nothing", None));
+        let r = door().answer(&get("/nothing"));
         assert_eq!(r.status, 404);
         let e: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(e["error"]["code"], "NOT_FOUND");
@@ -186,7 +151,6 @@ mod tests {
             let r = door().answer(&Request {
                 method,
                 path: "/.well-known/best",
-                if_none_match: None,
             });
             assert_eq!(r.status, 405, "{method}");
             assert_eq!(r.headers, vec![("Allow", "GET".to_string())]);

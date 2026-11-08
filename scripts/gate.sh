@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The local proof of SDLC.md section 3: fmt, clippy with warnings as errors and the tests of the door; the board's
 # firmware built (with Wi-Fi, a placeholder network, never run); then the qemu lane: the firmware built for Espressif's
-# QEMU and run there, and best-validate against the door it serves over HTTPS. The last line is GATE GREEN or GATE
-# RED, and nothing else is a pass. CI runs this same script.
+# QEMU and run there, best-validate against the door it serves over HTTPS, and the manifest sent whole to a client
+# that holds it. The last line is GATE GREEN or GATE RED, and nothing else is a pass. CI runs this same script.
 #
 #   scripts/gate.sh [fmt|clippy|test|board|qemu|all]      default: all
 #
@@ -57,6 +57,14 @@ qemu_lane() {
     NODE_TLS_REJECT_UNAUTHORIZED=0 npx -y "@behavioralstate/best-validate@$BEST_VALIDATE_VERSION" \
       "https://localhost:$port" 2>&1 | grep -v NODE_TLS_REJECT_UNAUTHORIZED | tee "$log.validate"
     grep -q "^CONFORMANT" "$log.validate" || ok=0
+    # A client holding the manifest is sent it whole, never a 304, which ESP-IDF would give a length of 0.
+    local url="https://localhost:$port/.well-known/best" etag status
+    etag="$(curl -sk -D - -o /dev/null "$url" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')"
+    status="$(curl -sk -o /dev/null -w '%{http_code}' -H "If-None-Match: $etag" "$url")"
+    if [ -z "$etag" ] || [ "$status" != 200 ]; then
+      echo "a client holding the manifest (If-None-Match: $etag) was answered $status, not the manifest whole"
+      ok=0
+    fi
   else
     tail -20 "$log"
   fi

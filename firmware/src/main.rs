@@ -61,12 +61,7 @@ fn main() -> anyhow::Result<()> {
         let door = door.clone();
         server.fn_handler::<anyhow::Error, _>("/*", m, move |req| {
             let path = req.uri().split('?').next().unwrap_or("/").to_string();
-            let if_none_match = req.header("If-None-Match").map(str::to_string);
-            let answer = door.answer(&Request {
-                method,
-                path: &path,
-                if_none_match: if_none_match.as_deref(),
-            });
+            let answer = door.answer(&Request { method, path: &path });
             let mut headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
             headers.extend(answer.headers.iter().map(|(h, v)| (*h, v.as_str())));
             let mut resp = req.into_response(answer.status, None, &headers)?;
