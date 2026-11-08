@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The local proof of SDLC.md section 3: fmt, clippy with warnings as errors and the tests of the door; the board's
 # firmware built (with Wi-Fi, a placeholder network, never run); then the qemu lane: the firmware built for Espressif's
-# QEMU and run there, best-validate against the door it serves over HTTPS, and the manifest sent whole to a client
-# that holds it. The last line is GATE GREEN or GATE RED, and nothing else is a pass. CI runs this same script.
+# QEMU and run there, best-validate against the door it serves over HTTPS, HEAD answered as GET without the body,
+# and the manifest sent whole to a client that holds it. The last line is GATE GREEN or GATE RED, and nothing else is
+# a pass. CI runs this same script.
 #
 #   scripts/gate.sh [fmt|clippy|test|board|qemu|all]      default: all
 #
@@ -63,6 +64,15 @@ qemu_lane() {
     status="$(curl -sk -o /dev/null -w '%{http_code}' -H "If-None-Match: $etag" "$url")"
     if [ -z "$etag" ] || [ "$status" != 200 ]; then
       echo "a client holding the manifest (If-None-Match: $etag) was answered $status, not the manifest whole"
+      ok=0
+    fi
+    # HEAD is answered as GET, without the body: two on one connection both read as answers, which a body sent after
+    # the first would break.
+    local heads
+    heads="$(curl -sk --http1.1 -I "$url" "$url" | tr -d '\r')"
+    if [ "$(grep -c '^HTTP/1.1 200' <<<"$heads")" != 2 ] || [ "$(grep -ci '^etag: ' <<<"$heads")" != 2 ]; then
+      echo "two HEADs on the manifest on one connection were not both answered 200 with the ETag:"
+      echo "$heads"
       ok=0
     fi
   else

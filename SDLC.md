@@ -41,8 +41,8 @@
   --check` on the door and the firmware, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test
   --workspace` on the door, the board's firmware build (Wi-Fi included, against a placeholder network), then the qemu
   lane: the firmware built for Espressif's QEMU and run there, `best-validate` against the door it serves over HTTPS,
-  and the manifest sent whole to a client that holds it. It ends in `GATE GREEN` or `GATE RED`; CI runs the same
-  script. No board is ever needed by CI.
+  HEAD answered as GET without the body, and the manifest sent whole to a client that holds it. It ends in `GATE
+  GREEN` or `GATE RED`; CI runs the same script. No board is ever needed by CI.
 
 ## 4. Ship
 
