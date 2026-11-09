@@ -813,13 +813,17 @@ fn a_head_on_the_camera_link_leaves_the_link_waiting() {
 }
 
 #[test]
-fn a_head_on_the_snapshot_takes_no_picture() {
-    let board = Board::default().seeing(Err("no frame in time"));
-    let door = board.door();
-    let token = token_of(&board, &door);
-    let head = Request {
-        method: "HEAD",
-        ..query("/queries/get-snapshot", &token)
-    };
-    assert_eq!(door.answer(&head).status, 200);
+fn a_head_on_the_snapshot_is_answered_as_a_get_is() {
+    for picture in [Ok(PICTURE), Err("no frame in time")] {
+        let board = Board::default().seeing(picture);
+        let door = board.door();
+        let token = token_of(&board, &door);
+        let get = door.answer(&query("/queries/get-snapshot", &token));
+        let head = door.answer(&Request {
+            method: "HEAD",
+            ..query("/queries/get-snapshot", &token)
+        });
+        assert_eq!((head.status, head.content_type), (get.status, get.content_type));
+        assert_eq!(head.headers, get.headers);
+    }
 }
