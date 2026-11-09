@@ -121,7 +121,8 @@ With `look` sent over and over, BOOT held for about 4 seconds and then one short
   67.3s Looked
 ```
 
-The person at the robot felt the joint go loose at the hold and stiffen again after the short press.
+The person at the robot felt the joint go loose at the hold, and stiffen again when the first command after the short
+press was taken.
 
 ## Through a restart
 

@@ -182,7 +182,13 @@ impl Door {
     /// The robot's button was let go after `held_ms`. A short press is the stop and nothing else: anyone who can reach
     /// the door can arm a code, so a press that might approve one could not be counted on to stop the head.
     pub fn released_after(&self, held_ms: u64) -> Pressed {
+        // Commands wait until the press has taken effect.
+        let pressed = self.what_the_press_did(held_ms);
         self.button_up();
+        pressed
+    }
+
+    fn what_the_press_did(&self, held_ms: u64) -> Pressed {
         if held_ms >= APPROVE_AFTER_MS {
             return self.press().map_or(Pressed::NothingApproved, Pressed::Approved);
         }
