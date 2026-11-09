@@ -1,4 +1,4 @@
-//! The page the person opens from the agent's link: the robot's own, where they see who asks, approve by pressing the
+//! The page the person opens from the agent's link: the robot's own, where they see who asks, approve by holding the
 //! robot's button, or deny. Everything the agent sent is escaped: it is the agent's text, shown to a person.
 
 use crate::signin::{Registration, State, ARMED_FOR_S};
@@ -47,10 +47,10 @@ fn about(r: &Registration, now: u64) -> String {
         State::Pending => format!(
             "<form method=post action=approve><input type=hidden name=code value=\"{code}\"><button name=action \
              value=approve>Approve</button><button name=action value=deny>Deny</button></form><p>Approve, then \
-             press the robot's BOOT button within {ARMED_FOR_S} seconds: the press is what approves.</p>"
+             hold the robot's BOOT button for 3 seconds, within {ARMED_FOR_S} seconds: the hold is what approves.</p>"
         ),
         State::Armed { until_ms } => format!(
-            "<p><b>Press the robot's BOOT button now</b>: {} seconds left. This page shows the outcome when it \
+            "<p><b>Hold the robot's BOOT button for 3 seconds now</b>: {} seconds left. This page shows the outcome when it \
              reloads.</p><meta http-equiv=refresh content=\"3; url=approve?code={code}\">",
             until_ms.saturating_sub(now).div_ceil(1000)
         ),

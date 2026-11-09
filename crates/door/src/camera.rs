@@ -199,7 +199,7 @@ pub(crate) fn parse_rfc3339(s: &str) -> Option<u64> {
         _ => return None,
     };
     // The days from a date, by Howard Hinnant's `days_from_civil`.
-    let y = year - u64::from(month <= 2);
+    let y = year.checked_sub(u64::from(month <= 2))?;
     let (era, yoe) = (y / 400, y % 400);
     let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
@@ -210,7 +210,15 @@ pub(crate) fn parse_rfc3339(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::rfc3339;
+    use super::{parse_rfc3339, rfc3339};
+
+    #[test]
+    fn a_time_before_the_epoch_is_no_time_even_in_the_first_months_of_year_zero() {
+        assert_eq!(parse_rfc3339("0000-01-15T00:00:00Z"), None);
+        assert_eq!(parse_rfc3339("0000-02-29T00:00:00Z"), None);
+        assert_eq!(parse_rfc3339("0000-03-01T00:00:00Z"), None);
+        assert_eq!(parse_rfc3339("1970-01-01T00:00:00Z"), Some(0));
+    }
 
     #[test]
     fn a_time_is_written_as_rfc_3339_in_utc() {

@@ -1,5 +1,5 @@
 //! The door: what a request is answered with, apart from the board. The firmware hands each request to
-//! [`Door::answer`] and the button's presses to [`Door::press`], and sends back what they return; nothing here knows
+//! [`Door::answer`] and the button's presses to [`Door::released_after`], and sends back what they return; nothing here knows
 //! the HTTP server, the network or the pins. What the door needs of the board comes through [`Ports`].
 
 mod camera;
@@ -88,6 +88,25 @@ pub struct Status {
     pub wifi_rssi: Option<i8>,
 }
 
+/// How long the button is held to approve a sign-in. The page asks for three seconds, so that someone counting them
+/// does not fall short.
+pub const APPROVE_AFTER_MS: u64 = 2_000;
+
+/// What letting go of the robot's button did.
+#[derive(Debug, PartialEq)]
+pub enum Pressed {
+    /// A sign-in was approved: its user code.
+    Approved(String),
+    /// Held, with no sign-in armed.
+    NothingToApprove,
+    /// The head let go and refuses commands.
+    Stopped,
+    /// The head takes commands again.
+    LetGo,
+    /// A short press on a robot with no head.
+    NoHead,
+}
+
 /// What the door needs of the board.
 pub struct Ports {
     pub clock: Box<dyn Clock>,
@@ -160,8 +179,21 @@ impl Door {
         }
     }
 
-    /// The robot's button was pressed: the code armed on the page, if any, is approved. Returns that code.
-    pub fn press(&self) -> Option<String> {
+    /// The robot's button was let go after `held_ms`. A short press is the stop and nothing else: anyone who can reach
+    /// the door can arm a code, so a press that might approve one could not be counted on to stop the head.
+    pub fn released_after(&self, held_ms: u64) -> Pressed {
+        if held_ms >= APPROVE_AFTER_MS {
+            return self.press().map_or(Pressed::NothingToApprove, Pressed::Approved);
+        }
+        match self.stop_or_release() {
+            Some(true) => Pressed::Stopped,
+            Some(false) => Pressed::LetGo,
+            None => Pressed::NoHead,
+        }
+    }
+
+    /// The robot's button was held long enough: the code armed on the page, if any, is approved. Returns that code.
+    pub(crate) fn press(&self) -> Option<String> {
         self.signin().press(self.ports.clock.now_ms())
     }
 

@@ -10,7 +10,7 @@ The board is an ESP32-S3 with 16 MB of flash and 8 MB of PSRAM (N16R8). The firm
 library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
-not serve in the BEST error format. An agent signs in with the device flow, approved by a press of the robot's BOOT
+not serve in the BEST error format. An agent signs in with the device flow, approved by holding the robot's BOOT
 button, and reads `get-status`: the robot's uptime, free memory and Wi-Fi signal. It sees: `get-snapshot` answers a
 picture, and live frames open in a browser or OpenCV ([the camera](#the-camera)). It moves: the command `look` turns a
 servo left, ahead or right, an event says how each went, and the BOOT button stops it ([the servo](#the-servo)). It runs
@@ -123,8 +123,9 @@ A board without a name is reached by its address instead, with a self-signed cer
 
 The manifest declares the device flow (RFC 8628): the agent asks the robot for a code and gives the person a link to
 the robot's own page, `/approve?code=...`, which shows who asks and the code. The person checks the code against what
-the agent shows and clicks Approve, then presses the robot's BOOT button within 30 seconds: the press is what approves,
-so only someone at the robot can let an agent in. Deny refuses it. With best-cli:
+the agent shows and clicks Approve, then holds the robot's BOOT button for 3 seconds, within 30 seconds of the click: the
+hold is what approves, so only someone at the robot can let an agent in. A short press approves nothing, because it is
+[the stop](#the-servo), and anyone who can reach the robot can arm a code. Deny refuses it. With best-cli:
 
 ```bash
 best login robot --manifest robot.behavioralstate.io
@@ -224,11 +225,11 @@ credential is answered as the first was and moves nothing, and the same `id` wit
 the `id` is new again. A credential reads only the events of its own commands.
 
 Commands are taken at two a second for each credential, and a faster one is a `429` with `Retry-After`. An `id` or a
-correlation id is 64 characters at most. Until the board has the time from the network a command is refused with a
+correlation id is 64 bytes at most. Until the board has the time from the network a command is refused with a
 `400`, `TIME_UNKNOWN`, since every event carries it. If the flash does not take a command the answer is `202` and not
 `201`: the servo has already moved. There is no live stream of events; a client reads `GET /events` again.
 
-**The stop is the BOOT button.** One short press, with no sign-in waiting for it, takes the pulses off the servo, which
+**The stop is the BOOT button.** One short press, with a sign-in waiting or not, takes the pulses off the servo, which
 goes loose, and every command is refused with a `400`, `STOPPED`. A second press lets commands through again and moves
 nothing: the servo stays loose until the next one. It works with the network down, and a restart clears it, with the
 servo still sent nothing until a command. It stops the signal and not the power, so a switch in the servo's own supply

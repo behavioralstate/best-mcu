@@ -1301,6 +1301,45 @@ fn the_button_stops_the_head_until_it_is_pressed_again() {
 #[test]
 fn a_robot_with_no_head_has_nothing_to_stop() {
     assert_eq!(Board::default().door().stop_or_release(), None);
+    assert_eq!(Board::default().door().released_after(100), Pressed::NoHead);
+}
+
+#[test]
+fn a_short_press_stops_the_head_and_approves_no_sign_in_armed_from_the_network() {
+    let (board, neck, door, _) = turning();
+    let reg = register(&door, "client_id=best&connection=stranger");
+    let (user, device) = (reg["user_code"].as_str().unwrap(), reg["device_code"].as_str().unwrap());
+    approve(&door, user);
+
+    assert_eq!(door.released_after(100), Pressed::Stopped);
+    assert_eq!(neck.rests.load(Ordering::SeqCst), 1);
+    assert_eq!(door.released_after(APPROVE_AFTER_MS - 1), Pressed::LetGo);
+    board.wait(5);
+    assert_ne!(poll(&door, device).status, 200, "a short press approved a code");
+
+    assert_eq!(
+        door.released_after(APPROVE_AFTER_MS),
+        Pressed::Approved(user.to_string())
+    );
+    assert_eq!(neck.rests.load(Ordering::SeqCst), 1, "a hold is not the stop");
+    board.wait(5);
+    assert_eq!(poll(&door, device).status, 200);
+}
+
+#[test]
+fn a_hold_with_no_sign_in_armed_does_nothing() {
+    let (_, neck, door, _) = turning();
+    assert_eq!(door.released_after(APPROVE_AFTER_MS), Pressed::NothingToApprove);
+    assert_eq!(neck.rests.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn an_id_too_long_is_measured_and_told_in_bytes() {
+    let (_, neck, door, token) = turning();
+    let r = send(&door, &token, &envelope(&"\u{20ac}".repeat(22), "left"));
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "id"));
+    assert!(json_of(&r)["error"]["message"].as_str().unwrap().contains("64 bytes"));
+    assert!(neck.moved().is_empty());
 }
 
 #[test]

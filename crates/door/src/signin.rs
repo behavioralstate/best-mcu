@@ -327,7 +327,7 @@ impl SignIn {
         Ok(())
     }
 
-    /// The robot's button was pressed: the armed code, if one is, is approved. Returns its user code.
+    /// The robot's button was held: the armed code, if one is, is approved. Returns its user code.
     pub fn press(&mut self, now: u64) -> Option<String> {
         let full = self.held(now) >= CAPACITY;
         let r = self

@@ -95,14 +95,26 @@ $ best send robot look --data '{"toward":"left"}' --id servo-stopped-1 --json
 
 A second press moved nothing, as it should. The next command was taken, and is `servo-released-1` in the log above.
 
+## A sign-in cannot borrow the stop
+
+Anyone who can reach the robot can arm a sign-in, so a short press is only ever the stop, and approving takes holding
+the button for 3 seconds. The firmware was changed for that after the runs above, flashed, and tried with a script
+playing a stranger on the network: it registered a session sign-in, armed it again every 18 s and polled it, while `look`
+was sent every few seconds. The person at the robot gave two short presses and then a hold:
+
+- At 4.6 s the sign-in was pending, and it stayed pending through both short presses.
+- At 5.8 s a command was taken. At 31.1 s, after the first short press, one was refused; the script did not keep the
+  refusal's code. At 38.6 s, after the second, one was taken again.
+- At 44.3 s, after the hold, the sign-in was approved. Its credential was thrown away unread.
+
 ## Through a restart
 
-With no servo attached, the same firmware: ten more commands, `many-1` to `many-10`, then the board restarted. It
+With no servo attached, on an earlier build with the same command code: ten more commands, `many-1` to `many-10`, then the board restarted. It
 still held eight events, `many-3` to `many-10`, and `many-10` sent again was answered as the first was.
 
 ## What it costs
 
-The firmware image is 1,480,368 bytes, 9.04% of the app partition. Internal RAM free was 282 KB at start and 100 KB with
+The firmware image is 1,481,104 bytes, 9.04% of the app partition. Internal RAM free was 282 KB at start and 100 KB with
 the door served. A viewer of the live frames with four more TLS connections held open to the door, after the commands
 above: all four were answered, the viewer had 52 frames in 24 s, the least internal RAM free since start was 39,904
 bytes, and the board did not restart.

@@ -183,7 +183,7 @@ fn short(field: &str, value: &str) -> Result<(), Response> {
     if value.len() > LONGEST_ID {
         return Err(invalid(
             field,
-            &format!("{field} is longer than {LONGEST_ID} characters: send a shorter one"),
+            &format!("{field} is longer than {LONGEST_ID} bytes: send a shorter one"),
         ));
     }
     Ok(())
@@ -241,7 +241,7 @@ pub(crate) fn capabilities(service: &str) -> [Value; 2] {
 }
 
 impl Door {
-    /// The robot's button, with no sign-in waiting: stops the head and refuses it commands, or lets them through
+    /// The robot's button, pressed briefly: stops the head and refuses it commands, or lets them through
     /// again. Whether it is now stopped; none on a robot with no head.
     pub fn stop_or_release(&self) -> Option<bool> {
         let head = self.ports.head.as_deref()?;
