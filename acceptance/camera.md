@@ -42,7 +42,7 @@ $ best query robot get-camera-link
 
 Opened as it is, the certificate verified:
 
-- In a browser (the Chromium of Claude's desktop app): the document's type was `multipart/x-mixed-replace`, its image
+- In a browser (Chromium): the document's type was `multipart/x-mixed-replace`, its image
   640 by 480, and what the screen in the picture showed changed between frames.
 - In OpenCV 5.0.0, `cv2.VideoCapture(url, cv2.CAP_FFMPEG)`: opened, 34 frames of `(480, 640, 3)` in 15.3 s, 2.22 a
   second.

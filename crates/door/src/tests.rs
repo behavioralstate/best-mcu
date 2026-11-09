@@ -797,3 +797,29 @@ fn the_live_frames_keep_their_port_when_the_endpoint_names_one() {
         format!("https://robot.example.com:{STREAM_PORT}")
     );
 }
+
+#[test]
+fn a_head_on_the_camera_link_leaves_the_link_waiting() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let path = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    let head = Request {
+        method: "HEAD",
+        ..query("/queries/get-camera-link", &token)
+    };
+    assert_eq!(door.answer(&head).status, 200);
+    assert!(door.admit_watcher(&watch(&path, None)).is_ok());
+}
+
+#[test]
+fn a_head_on_the_snapshot_takes_no_picture() {
+    let board = Board::default().seeing(Err("no frame in time"));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let head = Request {
+        method: "HEAD",
+        ..query("/queries/get-snapshot", &token)
+    };
+    assert_eq!(door.answer(&head).status, 200);
+}

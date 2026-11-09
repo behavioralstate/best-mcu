@@ -378,6 +378,10 @@ impl Door {
         }
         let camera = self.ports.camera.as_deref();
         match (req.path, camera) {
+            // HEAD reads: it takes no picture and does not replace the link waiting. The server sends it without a body.
+            ("/queries/get-snapshot" | "/queries/get-camera-link", Some(_)) if req.method == "HEAD" => {
+                no_store(json!({}))
+            }
             ("/queries", _) => json_ok(json!({ "queries": self.catalogue() }).to_string()),
             ("/queries/get-status/1.0", _) => json_ok(status_schema().to_string()),
             ("/queries/get-status", _) => json_ok(status(&self.ports.readings.read()).to_string()),
