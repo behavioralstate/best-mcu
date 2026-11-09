@@ -12,6 +12,29 @@ struct Board {
     kept: Arc<Mutex<Option<String>>>,
     vault_fails: Arc<Mutex<bool>>,
     eye: Arc<Mutex<Option<Box<dyn Camera>>>>,
+    neck: Arc<Mutex<Option<Box<dyn Head>>>>,
+    log: Shelf,
+    no_time: Arc<Mutex<bool>>,
+}
+
+/// A second place in the flash.
+#[derive(Clone, Default)]
+struct Shelf {
+    kept: Arc<Mutex<Option<String>>>,
+    fails: Arc<Mutex<bool>>,
+}
+
+impl Vault for Shelf {
+    fn read(&self) -> Option<String> {
+        self.kept.lock().unwrap().clone()
+    }
+    fn write(&self, kept: &str) -> Result<(), String> {
+        if *self.fails.lock().unwrap() {
+            return Err("flash full".into());
+        }
+        *self.kept.lock().unwrap() = Some(kept.to_string());
+        Ok(())
+    }
 }
 
 impl Clock for Board {
@@ -19,7 +42,7 @@ impl Clock for Board {
         self.now.load(Ordering::SeqCst)
     }
     fn utc_ms(&self) -> Option<u64> {
-        Some(1_794_229_199_007)
+        (!*self.no_time.lock().unwrap()).then_some(1_794_229_199_007)
     }
 }
 
@@ -90,6 +113,8 @@ impl Board {
                 vault: Box::new(self.clone()),
                 readings: Box::new(self.clone()),
                 camera: self.eye.lock().unwrap().take(),
+                head: self.neck.lock().unwrap().take(),
+                log: Box::new(self.log.clone()),
             },
         )
     }
@@ -825,5 +850,540 @@ fn a_head_on_the_snapshot_is_answered_as_a_get_is() {
         });
         assert_eq!((head.status, head.content_type), (get.status, get.content_type));
         assert_eq!(head.headers, get.headers);
+    }
+}
+
+#[derive(Clone, Default)]
+struct Neck {
+    moves: Arc<Mutex<Vec<Toward>>>,
+    rests: Arc<AtomicU8>,
+    fails: Arc<Mutex<bool>>,
+}
+
+impl Head for Neck {
+    fn look(&self, toward: Toward) -> Result<(), String> {
+        if *self.fails.lock().unwrap() {
+            return Err("no signal".into());
+        }
+        self.moves.lock().unwrap().push(toward);
+        Ok(())
+    }
+    fn rest(&self) {
+        self.rests.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Neck {
+    fn moved(&self) -> Vec<Toward> {
+        self.moves.lock().unwrap().clone()
+    }
+}
+
+/// A board with a head, its door, and a credential for it.
+fn turning() -> (Board, Neck, Door, String) {
+    let (board, neck) = (Board::default(), Neck::default());
+    *board.neck.lock().unwrap() = Some(Box::new(neck.clone()));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    (board, neck, door, token)
+}
+
+fn envelope(id: &str, toward: &str) -> Value {
+    json!({
+        "specversion": "1.0",
+        "id": id,
+        "source": "urn:test",
+        "type": "Look",
+        "datacontenttype": "application/json",
+        "dataschema": format!("{ENDPOINT}/commands/look/1.0"),
+        "time": "2026-11-09T12:46:15Z",
+        "data": { "toward": toward },
+    })
+}
+
+fn send(door: &Door, token: &str, body: &Value) -> Response {
+    send_as(door, token, "application/cloudevents+json", body.to_string().as_bytes())
+}
+
+fn send_as(door: &Door, token: &str, kind: &str, body: &[u8]) -> Response {
+    door.answer(&Request {
+        method: "POST",
+        path: "/commands",
+        query: "",
+        authorization: Some(token),
+        content_type: Some(kind),
+        body,
+    })
+}
+
+fn field_of(r: &Response) -> String {
+    json_of(r)["error"]["details"]["field"]
+        .as_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn events_of(door: &Door, token: &str, query_string: &str) -> Value {
+    let path = format!("/events?{query_string}");
+    let r = door.answer(&query(&path, token));
+    assert_eq!(r.status, 200, "{:?}", r.body);
+    json_of(&r)
+}
+
+#[test]
+fn a_board_without_a_head_declares_no_commands_and_takes_none() {
+    let board = Board::default();
+    let door = board.door();
+    let m = json_of(&door.answer(&req("GET", "/.well-known/best")));
+    let names: Vec<_> = m["best"]["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["io.best.agents.queries"]);
+    assert_eq!(door.answer(&req("GET", "/commands")).status, 404);
+    assert_eq!(door.answer(&req("GET", "/events")).status, 404);
+}
+
+#[test]
+fn a_board_with_a_head_declares_commands_and_events() {
+    let (_, _, door, _) = turning();
+    let m = json_of(&door.answer(&req("GET", "/.well-known/best")));
+    let names: Vec<_> = m["best"]["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"io.best.agents.commands".to_string()));
+    assert!(names.contains(&"io.best.agents.events".to_string()));
+}
+
+#[test]
+fn commands_and_events_are_behind_the_sign_in() {
+    let (_, neck, door, _) = turning();
+    assert_eq!(door.answer(&req("GET", "/commands")).status, 401);
+    assert_eq!(door.answer(&req("GET", "/events")).status, 401);
+    assert_eq!(send(&door, "Bearer wrong", &envelope("a", "left")).status, 401);
+    assert!(neck.moved().is_empty());
+}
+
+#[test]
+fn the_catalogue_names_a_skill_and_its_schema_says_what_it_takes() {
+    let (_, _, door, token) = turning();
+    let c = json_of(&door.answer(&query("/commands", &token)));
+    let entry = &c["commands"][0];
+    assert_eq!(c["commands"].as_array().unwrap().len(), 1);
+    assert_eq!(entry["schema"], "look");
+    assert_eq!(entry["version"], "1.0");
+    assert_eq!(entry["commandType"], "Look");
+    assert_eq!(entry["dataschema"], format!("{ENDPOINT}/commands/look/1.0"));
+    let r = door.answer(&query("/commands/look/1.0", &token));
+    assert_eq!((r.status, r.content_type), (200, "application/schema+json"));
+    let s = json_of(&r);
+    assert_eq!(s["commandType"], "Look");
+    assert_eq!(s["produces"], json!(["Looked", "LookFailed"]));
+    assert_eq!(s["properties"]["toward"]["enum"], json!(["left", "ahead", "right"]));
+    assert_eq!(door.answer(&query("/commands/look/9.9", &token)).status, 404);
+}
+
+#[test]
+fn a_command_moves_the_head_and_its_event_carries_the_correlation() {
+    let (_, neck, door, token) = turning();
+    let r = send(&door, &token, &envelope("cmd-1", "left"));
+    assert_eq!(r.status, 201, "{:?}", r.body);
+    let a = json_of(&r);
+    assert_eq!(
+        (a["id"].as_str(), a["correlationId"].as_str()),
+        (Some("cmd-1"), Some("cmd-1"))
+    );
+    assert_eq!(neck.moved(), [Toward::Left]);
+    let log = events_of(&door, &token, "correlationId=cmd-1");
+    let e = &log["events"][0];
+    assert_eq!(log["events"].as_array().unwrap().len(), 1);
+    assert_eq!(log.get("nextCursor"), None);
+    assert_eq!(e["type"], "Looked");
+    assert_eq!(e["specversion"], "1.0");
+    assert_eq!(e["datacontenttype"], "application/json");
+    assert_eq!(e["correlationid"], "cmd-1");
+    assert_eq!(e["time"], "2026-11-09T12:59:59.007Z");
+    assert_eq!(e["data"]["toward"], "left");
+}
+
+#[test]
+fn a_command_may_name_its_correlation_and_plain_json_is_taken_too() {
+    let (_, _, door, token) = turning();
+    let mut c = envelope("cmd-1", "right");
+    c["correlationid"] = json!("trip-7");
+    let r = send_as(
+        &door,
+        &token,
+        "application/json; charset=utf-8",
+        c.to_string().as_bytes(),
+    );
+    assert_eq!(r.status, 201);
+    assert_eq!(json_of(&r)["correlationId"], "trip-7");
+    assert_eq!(
+        events_of(&door, &token, "correlationId=trip-7")["events"][0]["correlationid"],
+        "trip-7"
+    );
+}
+
+#[test]
+fn a_look_that_fails_is_told_as_an_event_with_the_reason() {
+    let (_, neck, door, token) = turning();
+    *neck.fails.lock().unwrap() = true;
+    assert_eq!(send(&door, &token, &envelope("cmd-1", "left")).status, 201);
+    let e = &events_of(&door, &token, "")["events"][0];
+    assert_eq!(e["type"], "LookFailed");
+    assert_eq!(e["correlationid"], "cmd-1");
+    assert_eq!(e["data"]["reason"], "no signal");
+}
+
+#[test]
+fn an_envelope_that_is_wrong_is_refused_naming_the_field() {
+    let (_, neck, door, token) = turning();
+    let without = |field: &str| {
+        let mut c = envelope("cmd-1", "left");
+        c.as_object_mut().unwrap().remove(field);
+        c
+    };
+    let changed = |field: &str, value: Value| {
+        let mut c = envelope("cmd-1", "left");
+        c[field] = value;
+        c
+    };
+    for field in [
+        "specversion",
+        "id",
+        "source",
+        "type",
+        "datacontenttype",
+        "dataschema",
+        "time",
+        "data",
+    ] {
+        let r = send(&door, &token, &without(field));
+        assert_eq!((r.status, field_of(&r).as_str()), (400, field));
+    }
+    for (field, value) in [
+        ("specversion", json!("0.3")),
+        ("id", json!("x".repeat(65))),
+        ("type", json!("Fly")),
+        ("dataschema", json!("https://elsewhere.example/look")),
+        ("time", json!("yesterday")),
+        ("correlationid", json!(7)),
+        ("correlationid", json!("x".repeat(65))),
+    ] {
+        let r = send(&door, &token, &changed(field, value));
+        assert_eq!((r.status, field_of(&r).as_str()), (400, field));
+    }
+    assert!(neck.moved().is_empty());
+}
+
+#[test]
+fn data_that_is_wrong_is_refused_naming_the_field() {
+    let (_, neck, door, token) = turning();
+    let r = send(&door, &token, &envelope("cmd-1", "up"));
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "data.toward"));
+    assert!(json_of(&r)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("left, ahead or right"));
+    let mut c = envelope("cmd-1", "left");
+    c["data"]["degrees"] = json!(90);
+    let r = send(&door, &token, &c);
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "data.degrees"));
+    assert!(neck.moved().is_empty());
+}
+
+#[test]
+fn a_body_that_is_not_taken_says_so() {
+    let (_, _, door, token) = turning();
+    let r = send_as(&door, &token, "text/plain", b"{}");
+    assert_eq!((r.status, field_of(&r).as_str()), (415, "Content-Type"));
+    assert!(json_of(&r)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("application/cloudevents+json"));
+    let r = send_as(&door, &token, "application/json", b"not json");
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "body"));
+    let deep = "[".repeat(2000);
+    let r = send_as(&door, &token, "application/json", deep.as_bytes());
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "body"));
+    assert!(json_of(&r)["error"]["message"].as_str().unwrap().contains("nests"));
+}
+
+#[test]
+fn brackets_inside_a_string_are_not_depth() {
+    let (_, neck, door, token) = turning();
+    let mut c = envelope("cmd-1", "left");
+    c["source"] = json!("[".repeat(100));
+    assert_eq!(send(&door, &token, &c).status, 201);
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
+fn a_duplicate_is_answered_as_the_first_was_and_moves_nothing() {
+    let (board, neck, door, token) = turning();
+    let first = send(&door, &token, &envelope("cmd-1", "left"));
+    board.wait(1);
+    let again = send(&door, &token, &envelope("cmd-1", "left"));
+    assert_eq!(again, first);
+    assert_eq!(neck.moved(), [Toward::Left]);
+    assert_eq!(events_of(&door, &token, "")["events"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_id_reused_with_another_payload_is_a_conflict_naming_it() {
+    let (board, neck, door, token) = turning();
+    assert_eq!(send(&door, &token, &envelope("cmd-1", "left")).status, 201);
+    board.wait(1);
+    let r = send(&door, &token, &envelope("cmd-1", "right"));
+    assert_eq!(r.status, 409);
+    assert_eq!(json_of(&r)["error"]["details"]["id"], "cmd-1");
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
+fn a_correlation_belongs_to_the_sender_that_first_used_it() {
+    let (board, neck, door, token) = turning();
+    let other = token_of(&board, &door);
+    let mut c = envelope("cmd-1", "left");
+    c["correlationid"] = json!("trip-7");
+    assert_eq!(send(&door, &token, &c).status, 201);
+    let mut theirs = envelope("cmd-2", "right");
+    theirs["correlationid"] = json!("trip-7");
+    let r = send(&door, &other, &theirs);
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "correlationid"));
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
+fn two_senders_of_one_id_with_no_correlation_are_one_accepted_and_one_refused() {
+    let (board, _, door, token) = turning();
+    let other = token_of(&board, &door);
+    assert_eq!(send(&door, &token, &envelope("same", "left")).status, 201);
+    let r = send(&door, &other, &envelope("same", "left"));
+    assert_eq!((r.status, field_of(&r).as_str()), (400, "correlationid"));
+}
+
+#[test]
+fn a_sender_reads_only_what_its_own_commands_did() {
+    let (board, _, door, token) = turning();
+    let other = token_of(&board, &door);
+    assert_eq!(send(&door, &token, &envelope("mine", "left")).status, 201);
+    assert_eq!(events_of(&door, &other, "")["events"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        events_of(&door, &other, "correlationId=mine")["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn the_event_log_filters_and_pages() {
+    let (board, _, door, token) = turning();
+    for (id, toward) in [("a", "left"), ("b", "ahead"), ("c", "right")] {
+        assert_eq!(send(&door, &token, &envelope(id, toward)).status, 201);
+        board.wait(1);
+    }
+    let page = events_of(&door, &token, "limit=2");
+    assert_eq!(page["events"].as_array().unwrap().len(), 2);
+    assert_eq!(page["events"][0]["correlationid"], "a");
+    let cursor = page["nextCursor"].as_str().unwrap();
+    let rest = events_of(&door, &token, &format!("limit=2&after={cursor}"));
+    assert_eq!(rest["events"].as_array().unwrap().len(), 1);
+    assert_eq!(rest["events"][0]["correlationid"], "c");
+    assert_eq!(rest.get("nextCursor"), None);
+    assert_eq!(
+        events_of(&door, &token, "type=Looked")["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        events_of(&door, &token, "type=LookFailed")["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        events_of(&door, &token, &format!("source={ENDPOINT}"))["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let time = |q: &str| events_of(&door, &token, q)["events"].as_array().unwrap().len();
+    assert_eq!(time("from=2026-11-09T12:59:59Z&to=2026-11-09T13:00:00Z"), 3);
+    assert_eq!(time("from=2026-11-09T13:00:00Z"), 0);
+    assert_eq!(time("to=2026-11-09T12:00:00Z"), 0);
+}
+
+#[test]
+fn a_parameter_that_is_wrong_is_refused_naming_it() {
+    let (_, _, door, token) = turning();
+    for (q, parameter) in [
+        ("from=yesterday", "from"),
+        ("to=2026-13-01T00:00:00Z", "to"),
+        ("limit=0", "limit"),
+        ("limit=many", "limit"),
+        ("after=gone", "after"),
+    ] {
+        let r = door.answer(&query(&format!("/events?{q}"), &token));
+        assert_eq!(r.status, 400, "{q}");
+        assert_eq!(json_of(&r)["error"]["details"]["parameter"], parameter);
+    }
+}
+
+#[test]
+fn a_command_past_the_pace_is_told_when_to_send_again_and_may_be_retried() {
+    let (board, neck, door, token) = turning();
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    let r = send(&door, &token, &envelope("b", "right"));
+    assert_eq!(r.status, 429);
+    assert!(r.headers.iter().any(|(h, v)| *h == "Retry-After" && v == "1"));
+    assert_eq!(neck.moved(), [Toward::Left]);
+    board.wait(1);
+    assert_eq!(send(&door, &token, &envelope("b", "right")).status, 201);
+}
+
+#[test]
+fn the_pace_is_each_senders_own() {
+    let (board, _, door, token) = turning();
+    let other = token_of(&board, &door);
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    assert_eq!(send(&door, &other, &envelope("b", "right")).status, 201);
+}
+
+#[test]
+fn a_retry_is_answered_even_inside_the_pace() {
+    let (_, neck, door, token) = turning();
+    let first = send(&door, &token, &envelope("a", "left"));
+    assert_eq!(send(&door, &token, &envelope("a", "left")), first);
+    assert_eq!(neck.moved().len(), 1);
+}
+
+#[test]
+fn before_the_robot_knows_the_time_a_command_is_refused_and_its_id_stays_free() {
+    let (board, neck, door, token) = turning();
+    *board.no_time.lock().unwrap() = true;
+    let r = send(&door, &token, &envelope("a", "left"));
+    assert_eq!(r.status, 400);
+    assert_eq!(json_of(&r)["error"]["code"], "TIME_UNKNOWN");
+    assert!(neck.moved().is_empty());
+    *board.no_time.lock().unwrap() = false;
+    assert_eq!(send(&door, &token, &envelope("a", "right")).status, 201);
+    assert_eq!(neck.moved(), [Toward::Right]);
+}
+
+#[test]
+fn the_button_stops_the_head_until_it_is_pressed_again() {
+    let (board, neck, door, token) = turning();
+    assert_eq!(door.stop_or_release(), Some(true));
+    assert_eq!(neck.rests.load(Ordering::SeqCst), 1);
+    let r = send(&door, &token, &envelope("a", "left"));
+    assert_eq!(r.status, 400);
+    assert_eq!(json_of(&r)["error"]["code"], "STOPPED");
+    assert!(neck.moved().is_empty());
+    assert_eq!(door.stop_or_release(), Some(false));
+    board.wait(1);
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
+fn a_robot_with_no_head_has_nothing_to_stop() {
+    assert_eq!(Board::default().door().stop_or_release(), None);
+}
+
+#[test]
+fn what_was_sent_is_remembered_across_a_restart() {
+    let (board, neck, door, token) = turning();
+    let first = send(&door, &token, &envelope("cmd-1", "left"));
+    assert_eq!(first.status, 201);
+    drop(door);
+    *board.neck.lock().unwrap() = Some(Box::new(neck.clone()));
+    let restarted = board.door();
+    assert_eq!(send(&restarted, &token, &envelope("cmd-1", "left")), first);
+    assert_eq!(neck.moved().len(), 1);
+    assert_eq!(events_of(&restarted, &token, "")["events"][0]["correlationid"], "cmd-1");
+}
+
+#[test]
+fn a_flash_that_will_not_take_it_makes_the_answer_a_202_every_time() {
+    let (board, neck, door, token) = turning();
+    *board.log.fails.lock().unwrap() = true;
+    let first = send(&door, &token, &envelope("cmd-1", "left"));
+    assert_eq!(first.status, 202);
+    assert_eq!(send(&door, &token, &envelope("cmd-1", "left")), first);
+    assert_eq!(neck.moved().len(), 1);
+    assert_eq!(events_of(&door, &token, "")["events"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn the_robot_remembers_its_latest_commands_alone_and_keeps_them_all_in_flash() {
+    let (board, neck, door, token) = turning();
+    for i in 0..commands::REMEMBERED + 2 {
+        assert_eq!(send(&door, &token, &envelope(&format!("c{i}"), "left")).status, 201);
+        board.wait(1);
+    }
+    let log = events_of(&door, &token, "limit=99");
+    let events = log["events"].as_array().unwrap();
+    assert_eq!(events.len(), commands::REMEMBERED);
+    assert_eq!(events[0]["correlationid"], "c2");
+    let kept: Vec<Value> = serde_json::from_str(&board.log.read().unwrap()).unwrap();
+    assert_eq!(kept.len(), commands::REMEMBERED);
+    assert_eq!(
+        kept[commands::REMEMBERED - 1]["i"],
+        format!("c{}", commands::REMEMBERED + 1)
+    );
+    // Past the window, an id is free again.
+    assert_eq!(send(&door, &token, &envelope("c0", "right")).status, 201);
+    assert_eq!(neck.moved().last(), Some(&Toward::Right));
+}
+
+#[test]
+fn a_flash_that_holds_rubbish_starts_an_empty_log() {
+    let (board, neck) = (Board::default(), Neck::default());
+    *board.neck.lock().unwrap() = Some(Box::new(neck));
+    *board.log.kept.lock().unwrap() = Some("{not json".into());
+    let door = board.door();
+    let token = token_of(&board, &door);
+    assert_eq!(events_of(&door, &token, "")["events"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn rfc_3339_is_read_with_its_offset_and_its_fraction() {
+    use crate::camera::{parse_rfc3339, rfc3339};
+    let at = 1_794_229_199_007;
+    assert_eq!(parse_rfc3339(&rfc3339(at)), Some(at));
+    assert_eq!(parse_rfc3339("1970-01-01T00:00:00Z"), Some(0));
+    assert_eq!(parse_rfc3339("1970-01-01T01:00:00+01:00"), Some(0));
+    assert_eq!(parse_rfc3339("1970-01-01T00:00:01.5z"), Some(1500));
+    assert_eq!(parse_rfc3339("2024-02-29T00:00:00Z"), Some(1_709_164_800_000));
+    for wrong in [
+        "",
+        "yesterday",
+        "2026-11-09",
+        "2026-11-09 12:00:00Z",
+        "2026-11-09T12:00:00",
+        "2026-02-30T00:00:00Z",
+        "2025-02-29T00:00:00Z",
+        "2026-13-01T00:00:00Z",
+        "2026-00-01T00:00:00Z",
+        "2026-11-09T24:00:00Z",
+        "2026-11-09T12:00:00.Z",
+        "2026-11-09T12:00:00+1:00",
+        "+026-11-09T12:00:00Z",
+        "1969-12-31T23:59:59Z",
+    ] {
+        assert_eq!(parse_rfc3339(wrong), None, "{wrong}");
     }
 }

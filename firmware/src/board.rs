@@ -59,10 +59,35 @@ pub fn memory() -> (u32, u32, u32) {
 pub struct Flash(Mutex<EspDefaultNvs>);
 
 const KEY: &str = "credentials";
+const LEDGER_KEY: &str = "ledger";
 
 impl Flash {
     pub fn open(partition: EspDefaultNvsPartition) -> anyhow::Result<Self> {
         Ok(Self(Mutex::new(EspDefaultNvs::new(partition, "best-door", true)?)))
+    }
+}
+
+/// The commands remembered and the events they raised: a blob, because a string in this store stops at 4000 bytes.
+pub struct LedgerFlash(Mutex<EspDefaultNvs>);
+
+impl LedgerFlash {
+    pub fn open(partition: EspDefaultNvsPartition) -> anyhow::Result<Self> {
+        Ok(Self(Mutex::new(EspDefaultNvs::new(partition, "best-door", true)?)))
+    }
+}
+
+impl Vault for LedgerFlash {
+    fn read(&self) -> Option<String> {
+        let nvs = self.0.lock().ok()?;
+        let len = nvs.blob_len(LEDGER_KEY).ok()??;
+        let mut buf = vec![0u8; len];
+        let blob = nvs.get_blob(LEDGER_KEY, &mut buf).ok()??;
+        String::from_utf8(blob.to_vec()).ok()
+    }
+
+    fn write(&self, kept: &str) -> Result<(), String> {
+        let nvs = self.0.lock().map_err(|_| "the flash's lock is poisoned".to_string())?;
+        nvs.set_blob(LEDGER_KEY, kept.as_bytes()).map_err(|e| e.to_string())
     }
 }
 

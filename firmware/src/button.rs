@@ -1,5 +1,5 @@
-//! The robot's BOOT button, which approves a sign-in and, held, forgets every credential. QEMU has no button: the
-//! firmware built for it leaves this out.
+//! The robot's BOOT button, which approves a sign-in or stops the head and, held, forgets every credential. QEMU has no
+//! button: the firmware built for it leaves this out.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,8 +11,9 @@ use esp_idf_svc::hal::gpio::{Input, InputPin, PinDriver, Pull};
 const FORGET_AFTER: Duration = Duration::from_secs(10);
 const SAMPLE: Duration = Duration::from_millis(20);
 
-/// Watches the BOOT button: a press approves the code armed on the sign-in page; held ten seconds, every credential is
-/// forgotten. It reads the pin's level, low while pressed, every twenty milliseconds.
+/// Watches the BOOT button: a press approves the code armed on the sign-in page or, with none armed, stops the head or
+/// lets it go; held ten seconds, every credential is forgotten. It reads the pin's level, low while pressed, every
+/// twenty milliseconds.
 pub fn watch(pin: impl InputPin + 'static, door: Arc<Door>) -> anyhow::Result<()> {
     let button = PinDriver::input(pin, Pull::Up)?;
     std::thread::Builder::new()
@@ -38,11 +39,15 @@ fn follow(button: PinDriver<'static, Input>, door: &Door) {
             }
             continue;
         }
-        // Released: a press shorter than the hold, past a bounce, approves.
+        // Released: a press shorter than the hold, past a bounce, counts.
         if held >= 2 * SAMPLE && !forgot {
             match door.press() {
                 Some(code) => log::info!("the button approved the sign-in {code}"),
-                None => log::info!("the button was pressed; no sign-in was armed"),
+                None => match door.stop_or_release() {
+                    Some(true) => log::info!("the button stopped the head: it refuses commands until pressed again"),
+                    Some(false) => log::info!("the button released the head"),
+                    None => log::info!("the button was pressed; no sign-in was armed"),
+                },
             }
         }
         held = Duration::ZERO;

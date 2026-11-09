@@ -134,7 +134,7 @@ impl Ticket {
 }
 
 /// `ms` since the epoch as RFC 3339, UTC (the days to a date by Howard Hinnant's `civil_from_days`).
-fn rfc3339(ms: u64) -> String {
+pub(crate) fn rfc3339(ms: u64) -> String {
     let (secs, ms) = (ms / 1000, ms % 1000);
     let (days, rest) = (secs / 86_400, secs % 86_400);
     let z = days + 719_468;
@@ -152,6 +152,60 @@ fn rfc3339(ms: u64) -> String {
         rest / 60 % 60,
         rest % 60
     )
+}
+
+/// An RFC 3339 timestamp as `ms` since the epoch, or none when it is not one, or is before 1970.
+pub(crate) fn parse_rfc3339(s: &str) -> Option<u64> {
+    let digits = |from: usize, to: usize| -> Option<u64> {
+        let part = s.get(from..to)?;
+        part.bytes().all(|b| b.is_ascii_digit()).then(|| part.parse().ok())?
+    };
+    let at = |i: usize, c: u8| s.as_bytes().get(i) == Some(&c);
+    let is_t = at(10, b'T') || at(10, b't');
+    if !(at(4, b'-') && at(7, b'-') && is_t && at(13, b':') && at(16, b':')) {
+        return None;
+    }
+    let (year, month, day) = (digits(0, 4)?, digits(5, 7)?, digits(8, 10)?);
+    let (hour, minute, second) = (digits(11, 13)?, digits(14, 16)?, digits(17, 19)?);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let longest =
+        *[31, 28 + u64::from(leap), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31].get(month.checked_sub(1)? as usize)?;
+    if day == 0 || day > longest || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let mut rest = s.get(19..)?;
+    let mut ms = 0;
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let length = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if length == 0 {
+            return None;
+        }
+        ms = format!("{:0<3}", &fraction[..length])[..3].parse::<u64>().ok()?;
+        rest = &fraction[length..];
+    }
+    let offset_s: i64 = match rest.as_bytes().first()? {
+        b'Z' | b'z' if rest.len() == 1 => 0,
+        sign @ (b'+' | b'-') if rest.len() == 6 && rest.as_bytes()[3] == b':' => {
+            let two = |from: usize, to: usize| -> Option<i64> {
+                let part = rest.get(from..to)?;
+                part.bytes().all(|b| b.is_ascii_digit()).then(|| part.parse().ok())?
+            };
+            let (h, m) = (two(1, 3)?, two(4, 6)?);
+            if h > 23 || m > 59 {
+                return None;
+            }
+            (h * 3600 + m * 60) * if *sign == b'+' { 1 } else { -1 }
+        }
+        _ => return None,
+    };
+    // The days from a date, by Howard Hinnant's `days_from_civil`.
+    let y = year - u64::from(month <= 2);
+    let (era, yoe) = (y / 400, y % 400);
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = (era * 146_097 + doe) as i64 - 719_468;
+    let seconds = days * 86_400 + (hour * 3600 + minute * 60 + second) as i64 - offset_s;
+    u64::try_from(seconds).ok().map(|s| s * 1000 + ms)
 }
 
 #[cfg(test)]

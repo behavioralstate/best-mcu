@@ -20,6 +20,8 @@ mod board;
 mod button;
 #[cfg(not(feature = "qemu"))]
 mod camera;
+#[cfg(not(feature = "qemu"))]
+mod head;
 mod network;
 
 /// The name the door is known by and the address it is served at, set when the firmware is built.
@@ -76,15 +78,27 @@ fn main() -> anyhow::Result<()> {
     let sees = camera.is_some();
     report("camera up");
 
+    // QEMU emulates no servo.
+    #[cfg(feature = "qemu")]
+    let head = None;
+    #[cfg(not(feature = "qemu"))]
+    let head = Some(head::start(
+        peripherals.ledc.timer1,
+        peripherals.ledc.channel1,
+        peripherals.pins.gpio14,
+    )?);
+
     let door = Arc::new(Door::new(
         NAME,
         ENDPOINT,
         Ports {
             clock: Box::new(board::Board),
             entropy: Box::new(board::Board),
-            vault: Box::new(board::Flash::open(nvs)?),
+            vault: Box::new(board::Flash::open(nvs.clone())?),
             readings: Box::new(board::Board),
             camera,
+            head,
+            log: Box::new(board::LedgerFlash::open(nvs)?),
         },
     ));
     // QEMU emulates no button.

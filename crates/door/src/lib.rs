@@ -3,6 +3,7 @@
 //! the HTTP server, the network or the pins. What the door needs of the board comes through [`Ports`].
 
 mod camera;
+mod commands;
 mod guidance;
 mod page;
 mod signin;
@@ -13,6 +14,8 @@ use std::collections::BTreeMap;
 
 use camera::Ticket;
 pub use camera::{Frame, Watcher, FRAMES_TYPE, STREAM_PORT};
+use commands::Ledger;
+pub use commands::{Head, Toward};
 use serde_json::{json, Value};
 use signin::{OAuthError, Refusal, SignIn};
 
@@ -93,6 +96,10 @@ pub struct Ports {
     pub readings: Box<dyn Readings>,
     /// The camera, on a board that has one working.
     pub camera: Option<Box<dyn Camera>>,
+    /// The head, on a board that has one: what the robot's commands move.
+    pub head: Option<Box<dyn Head>>,
+    /// Where the commands remembered, and the events they raised, outlive a restart.
+    pub log: Box<dyn Vault>,
 }
 
 /// The door of one board, served at `endpoint` and named by `name`, the DNS name it is known by.
@@ -103,14 +110,16 @@ pub struct Door {
     ports: Ports,
     signin: Mutex<SignIn>,
     ticket: Mutex<Ticket>,
+    ledger: Mutex<Ledger>,
 }
 
 impl Door {
     pub fn new(name: &str, endpoint: &str, ports: Ports) -> Self {
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let manifest = manifest(name, &endpoint, ports.camera.is_some()).to_string();
+        let manifest = manifest(name, &endpoint, ports.camera.is_some(), ports.head.is_some()).to_string();
         let etag = format!("\"{:016x}\"", fnv1a(manifest.as_bytes()));
         let signin = Mutex::new(SignIn::restore(&ports.vault.read().unwrap_or_default()));
+        let ledger = Mutex::new(commands::restore(ports.log.as_ref()));
         Self {
             endpoint,
             manifest,
@@ -118,6 +127,7 @@ impl Door {
             ports,
             signin,
             ticket: Mutex::default(),
+            ledger,
         }
     }
 
@@ -133,6 +143,10 @@ impl Door {
             ("POST", "/approve") => self.decide(req),
             (_, "/approve") => not_allowed("GET, HEAD, POST", "the page is read with GET, answered with POST"),
             (_, path) if path == "/queries" || path.starts_with("/queries/") => self.queries(req),
+            (_, path) if self.ports.head.is_some() && (path == "/commands" || path.starts_with("/commands/")) => {
+                self.commands(req)
+            }
+            (_, "/events") if self.ports.head.is_some() => self.events(req),
             (_, "/camera/stream") if self.ports.camera.is_some() => error(
                 404,
                 "NOT_FOUND",
@@ -361,6 +375,10 @@ impl Door {
             .and_then(|(_, token)| self.signin().admits(now, token.trim()))
     }
 
+    fn ledger(&self) -> MutexGuard<'_, Ledger> {
+        self.ledger.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn ticket(&self) -> MutexGuard<'_, Ticket> {
         self.ticket.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -488,7 +506,7 @@ fn service_key(name: &str) -> String {
     name.rsplit('.').collect::<Vec<_>>().join(".")
 }
 
-fn manifest(name: &str, endpoint: &str, has_camera: bool) -> Value {
+fn manifest(name: &str, endpoint: &str, has_camera: bool, has_head: bool) -> Value {
     let service = service_key(name);
     let mut manifest = json!({
         "best": {
@@ -523,6 +541,12 @@ fn manifest(name: &str, endpoint: &str, has_camera: bool) -> Value {
             }]
         }
     });
+    if has_head {
+        manifest["best"]["capabilities"]
+            .as_array_mut()
+            .unwrap()
+            .extend(commands::capabilities(&service));
+    }
     if has_camera {
         // A service of its own: its frames are served on a port of their own, and are not JSON.
         let camera = format!("{service}.camera");

@@ -12,10 +12,13 @@ library on ESP-IDF.
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
 not serve in the BEST error format. An agent signs in with the device flow, approved by a press of the robot's BOOT
 button, and reads `get-status`: the robot's uptime, free memory and Wi-Fi signal. It sees: `get-snapshot` answers a
-picture, and live frames open in a browser or OpenCV ([the camera](#the-camera)). It runs on the board, a Freenove
-ESP32-S3-WROOM-1 on Wi-Fi, as `https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in Espressif's
-QEMU, without a camera: best-validate finds it conformant on both, the board's certificate verified. best-cli signs in
-to the board and queries it: [acceptance/sign-in.md](acceptance/sign-in.md), [acceptance/camera.md](acceptance/camera.md).
+picture, and live frames open in a browser or OpenCV ([the camera](#the-camera)). It moves: the command `look` turns a
+servo left, ahead or right, an event says how each went, and the BOOT button stops it ([the servo](#the-servo)). It runs
+on the board, a Freenove ESP32-S3-WROOM-1 on Wi-Fi, as `https://robot.behavioralstate.io` with a Let's Encrypt
+certificate, and in Espressif's QEMU, without a camera or a servo: best-validate finds it conformant on both, the board's
+certificate verified. best-cli signs in to the board, queries it and commands it:
+[acceptance/sign-in.md](acceptance/sign-in.md), [acceptance/camera.md](acceptance/camera.md),
+[acceptance/servo.md](acceptance/servo.md).
 
 ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
 GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
@@ -26,11 +29,11 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi and the camera) | 921 KB, 5.6% of the flash | 1.4 MB, 8.5% |
-| Internal RAM free at start | 355 KB | 283 KB |
-| … with the network up, the camera started and the door served | 297 KB | 115 KB |
-| … least, after TLS handshakes | 229 KB | |
-| … least, with four connections to the door and a viewer of the live frames at once | | 45 KB |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi, the camera and the servo) | 1.0 MB, 6.1% of the flash | 1.5 MB, 9.0% |
+| Internal RAM free at start | 355 KB | 282 KB |
+| … with the network up, the camera started and the door served | 297 KB | 100 KB |
+| … least, after TLS handshakes | 227 KB | |
+| … least, with four connections to the door and a viewer of the live frames at once | | 40 KB |
 | PSRAM used | almost none | 1.2 MB by the camera, up to 170 KB more by TLS |
 | The manifest read over a new connection, from a machine on the same network | | 1.0 to 1.3 s, the TLS handshake nearly all of it |
 | `best query robot get-status`: the manifest, the catalogue and the query, each over a new connection | | 0.9 to 1.1 s |
@@ -41,12 +44,13 @@ open at most, and TLS holds their buffers in PSRAM: in internal RAM a viewer and
 
 ## Layout
 
-- `crates/door`: the door, plain Rust: what each request is answered with, the sign-in and its page, and the queries.
-  It knows nothing of the board: it is given a clock, a random generator, a vault for the credentials, the
-  board's readings and, where there is one, a camera, and its tests run on any machine with fakes of them: `cargo test`.
+- `crates/door`: the door, plain Rust: what each request is answered with, the sign-in and its page, the queries, and
+  the commands and their events. It knows nothing of the board: it is given a clock, a random generator, vaults for the
+  credentials and the commands, the board's readings and, where there are, a camera and a servo, and its tests run on
+  any machine with fakes of them: `cargo test`.
 - `firmware`: the board's side, built with the esp toolchain: the network (Wi-Fi, or QEMU's Ethernet with the `qemu`
-  feature), ESP-IDF's HTTPS server carrying requests to the door, the flash that keeps credentials, the BOOT button,
-  the camera and its server, and the memory report on the serial log.
+  feature), ESP-IDF's HTTPS server carrying requests to the door, the flash that keeps credentials and commands, the BOOT
+  button, the camera and its server, the servo, and the memory report on the serial log.
 
 ## Try it in QEMU
 
@@ -184,3 +188,50 @@ Measured on the board, from a machine on the same network:
 The sensor has no JPEG of its own, so each frame is encoded by the CPU, and that is what holds the frame rate. The
 camera's clock is 24 MHz and not the usual 20: at 20 its harmonic at 2460 MHz fell inside Wi-Fi channel 11, the
 network's here, and the board lost half its packets, with answers up to 3 s late. At 24 it lost none of 15 pings.
+
+## The servo
+
+The servo's signal is on GPIO 14, its ground is joined with the board's, and its power is what the servo is rated for.
+One lightly loaded servo can run from the board's 5V pin, as the proof here did; one that works harder needs a supply of
+its own, or the board resets when USB cannot keep up. A board without a servo, QEMU's included, declares none of what
+follows. Everything past the manifest is behind the sign-in.
+
+The catalogue names a skill, never a motor:
+
+```bash
+best commands robot
+```
+
+```bash
+best send robot look --data '{"toward":"left"}'
+```
+
+`toward` is `left`, `ahead` or `right`: pulses of 2000, 1500 and 1000 µs. How far those turn it, and which way is left,
+depend on the servo and how it is mounted. It is sent nothing until the first command, then holds where it was told.
+
+The result is an event:
+
+```bash
+best events robot
+```
+
+`Looked` says the servo was told to turn, `LookFailed` says why it could not. A hobby servo reports nothing back, so
+neither says where it arrived.
+
+The retention window, for a command's `id` and for the event log alike, is **the last 8 commands accepted**, kept in
+flash through a restart and rewritten there by each one. Within it, a command sent again with the same `id` by the same
+credential is answered as the first was and moves nothing, and the same `id` with another payload is a `409`. Past it
+the `id` is new again. A credential reads only the events of its own commands.
+
+Commands are taken at two a second for each credential, and a faster one is a `429` with `Retry-After`. An `id` or a
+correlation id is 64 characters at most. Until the board has the time from the network a command is refused with a
+`400`, `TIME_UNKNOWN`, since every event carries it. If the flash does not take a command the answer is `202` and not
+`201`: the servo has already moved. There is no live stream of events; a client reads `GET /events` again.
+
+**The stop is the BOOT button.** One short press, with no sign-in waiting for it, takes the pulses off the servo, which
+goes loose, and every command is refused with a `400`, `STOPPED`. A second press lets commands through again and moves
+nothing: the servo stays loose until the next one. It works with the network down, and a restart clears it, with the
+servo still sent nothing until a command. It stops the signal and not the power, so a switch in the servo's own supply
+is the way to cut that.
+
+Everything the spec asks of commands and events fit on the board: nothing was left out for want of flash or RAM.
