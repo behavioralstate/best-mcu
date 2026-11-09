@@ -9,6 +9,7 @@
 # - an eFuse image saying chip revision 0.3, the timer group's watchdog off and the PSRAM octal, as `idf.py qemu`
 #   runs it;
 # - its emulated Ethernet (the `qemu` feature), since it has no Wi-Fi.
+# - TLS's buffers in internal RAM (firmware/sdkconfig.qemu): its emulated crypto cannot read PSRAM.
 #
 # BEST_MCU_QEMU_PORT     the port on 127.0.0.1 the door is forwarded to (default 8443)
 # BEST_MCU_QEMU_SERIAL   a file for the serial log, in place of the terminal
@@ -25,6 +26,7 @@ export CARGO_TARGET_DIR="$target"
 export BEST_MCU_ENDPOINT="https://localhost:$port"
 export ESP_IDF_COMPONENTS="main;driver;spiffs;fatfs;esp_https_server;esp_http_server;esp_eth;esp_netif;lwip;mbedtls;nvs_flash;pthread;esp_psram;vfs;esp_timer;log;freertos"
 win() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+export ESP_IDF_SDKCONFIG_DEFAULTS="$(win "$here/firmware/sdkconfig.defaults");$(win "$here/firmware/sdkconfig.qemu")"
 
 [ -f "$here/firmware/certs/qemu/cert.pem" ] || BEST_MCU_CERT_DIR="$here/firmware/certs/qemu" "$here/scripts/dev-cert.sh"
 (cd "$here/firmware" && cargo build --release --features qemu)

@@ -2,6 +2,7 @@
 //! readings of itself. Each is thin: the door decides what they mean.
 
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use best_mcu_door::{Clock, Entropy, Readings, Status, Vault};
 use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition};
@@ -9,9 +10,17 @@ use esp_idf_svc::sys;
 
 pub struct Board;
 
+const YEAR_2025_MS: u64 = 1_735_689_600_000;
+
 impl Clock for Board {
     fn now_ms(&self) -> u64 {
         (unsafe { sys::esp_timer_get_time() } / 1000) as u64
+    }
+
+    /// The system clock, once the network's time has set it: before that it reads a date long past.
+    fn utc_ms(&self) -> Option<u64> {
+        let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+        Some(since_epoch.as_millis() as u64).filter(|ms| *ms >= YEAR_2025_MS)
     }
 }
 

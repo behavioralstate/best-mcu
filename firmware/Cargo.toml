@@ -23,6 +23,12 @@ anyhow = "1"
 [build-dependencies]
 embuild = "0.33"
 
+# The camera's driver, in the component registry. Its bindings are esp_idf_svc::sys::camera.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp32-camera", version = "2.1.8" }
+bindings_header = "src/bindings.h"
+bindings_module = "camera"
+
 [profile.release]
 opt-level = "s"
 

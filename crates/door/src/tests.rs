@@ -11,11 +11,15 @@ struct Board {
     next: Arc<AtomicU8>,
     kept: Arc<Mutex<Option<String>>>,
     vault_fails: Arc<Mutex<bool>>,
+    eye: Arc<Mutex<Option<Box<dyn Camera>>>>,
 }
 
 impl Clock for Board {
     fn now_ms(&self) -> u64 {
         self.now.load(Ordering::SeqCst)
+    }
+    fn utc_ms(&self) -> Option<u64> {
+        Some(1_794_229_199_007)
     }
 }
 
@@ -52,7 +56,26 @@ impl Readings for Board {
     }
 }
 
+/// A camera that gives the same picture, or the same failure, every time.
+struct Eye(Result<Vec<u8>, String>);
+
+impl Camera for Eye {
+    fn take(&self) -> Result<Frame, String> {
+        self.0.clone().map(|jpeg| Frame {
+            jpeg,
+            width: 640,
+            height: 480,
+        })
+    }
+}
+
 impl Board {
+    fn seeing(self, picture: Result<&[u8], &str>) -> Self {
+        let eye = Eye(picture.map(<[u8]>::to_vec).map_err(str::to_string));
+        *self.eye.lock().unwrap() = Some(Box::new(eye));
+        self
+    }
+
     fn door(&self) -> Door {
         Door::new(
             "robot.example.com",
@@ -62,6 +85,7 @@ impl Board {
                 entropy: Box::new(self.clone()),
                 vault: Box::new(self.clone()),
                 readings: Box::new(self.clone()),
+                camera: self.eye.lock().unwrap().take(),
             },
         )
     }
@@ -547,4 +571,169 @@ fn a_body_too_long_for_the_board_is_refused_in_the_best_error_format() {
     let r = too_large(4096);
     assert_eq!(r.status, 413);
     assert!(json_of(&r)["error"]["message"].as_str().unwrap().contains("4096"));
+}
+
+const PICTURE: &[u8] = b"\xff\xd8a picture\xff\xd9";
+
+fn watch<'a>(path: &'a str, authorization: Option<&'a str>) -> Request<'a> {
+    Request {
+        authorization,
+        ..req("GET", path)
+    }
+}
+
+fn token_of(board: &Board, door: &Door) -> String {
+    format!(
+        "Bearer {}",
+        signed_in(board, door, "client_id=best")["access_token"]
+            .as_str()
+            .unwrap()
+    )
+}
+
+#[test]
+fn a_board_without_a_camera_declares_none_and_serves_none() {
+    let board = Board::default();
+    let door = board.door();
+    let m = json_of(&door.answer(&req("GET", "/.well-known/best")));
+    assert_eq!(m["best"]["capabilities"].as_array().unwrap().len(), 1);
+    let token = token_of(&board, &door);
+    let catalogue = json_of(&door.answer(&query("/queries", &token)));
+    assert_eq!(catalogue["queries"].as_array().unwrap().len(), 1);
+    assert_eq!(door.answer(&query("/queries/get-snapshot", &token)).status, 404);
+    let refused = door.admit_watcher(&watch("/camera/stream", Some(&token))).unwrap_err();
+    assert_eq!(refused.status, 404);
+}
+
+#[test]
+fn the_manifest_declares_the_live_frames_as_a_service_of_their_own() {
+    let door = Board::default().seeing(Ok(PICTURE)).door();
+    let m = json_of(&door.answer(&req("GET", "/.well-known/best")));
+    let service = "com.example.robot.camera";
+    assert_eq!(
+        m["best"]["services"][service]["http"]["endpoint"],
+        format!("{ENDPOINT}:{STREAM_PORT}")
+    );
+    let capability = &m["best"]["capabilities"][1];
+    assert_eq!(capability["name"], service);
+    assert_eq!(capability["service"], service);
+    assert_eq!(capability["endpoints"][0]["path"], "/camera/stream");
+}
+
+#[test]
+fn a_snapshot_is_behind_the_sign_in_and_answers_the_picture_as_json() {
+    use base64::Engine;
+
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    assert_eq!(door.answer(&req("GET", "/queries/get-snapshot")).status, 401);
+    let token = token_of(&board, &door);
+    let catalogue = json_of(&door.answer(&query("/queries", &token)));
+    let names: Vec<_> = catalogue["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|q| q["schema"].clone())
+        .collect();
+    assert_eq!(names, ["get-status", "get-snapshot", "get-camera-link"]);
+    assert!(json_of(&door.answer(&query("/queries/get-snapshot/1.0", &token)))["response"].is_object());
+    let r = door.answer(&query("/queries/get-snapshot", &token));
+    assert_eq!((r.status, r.content_type), (200, JSON));
+    assert!(r.headers.iter().any(|(h, v)| *h == "Cache-Control" && v == "no-store"));
+    let s = json_of(&r);
+    assert_eq!(s["contentType"], "image/jpeg");
+    assert_eq!(s["takenAt"], "2026-11-09T12:59:59.007Z");
+    assert_eq!((s["width"].as_u64(), s["height"].as_u64()), (Some(640), Some(480)));
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(s["data"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(data, PICTURE);
+}
+
+#[test]
+fn a_camera_that_gives_no_picture_is_refused_with_what_to_do() {
+    let board = Board::default().seeing(Err("no frame in time"));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let r = door.answer(&query("/queries/get-snapshot", &token));
+    assert_eq!(r.status, 503);
+    let e = json_of(&r);
+    assert_eq!(e["error"]["code"], "CAMERA_UNAVAILABLE");
+    assert!(e["error"]["message"].as_str().unwrap().contains("no frame in time"));
+}
+
+#[test]
+fn live_frames_are_refused_without_a_credential_or_a_link_and_say_how() {
+    let door = Board::default().seeing(Ok(PICTURE)).door();
+    let r = door
+        .admit_watcher(&watch("/camera/stream?ticket=wrong", None))
+        .unwrap_err();
+    assert_eq!(r.status, 401);
+    assert!(r.headers.iter().any(|(h, _)| *h == "WWW-Authenticate"));
+    assert!(json_of(&r)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("get-camera-link"));
+}
+
+#[test]
+fn a_credential_opens_the_live_frames_and_each_part_is_one_jpeg() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    assert!(door.admit_watcher(&watch("/camera/stream", Some(&token))).is_ok());
+    let mut expected = format!(
+        "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+        PICTURE.len()
+    )
+    .into_bytes();
+    expected.extend_from_slice(PICTURE);
+    expected.extend_from_slice(b"\r\n");
+    assert_eq!(door.next_part().unwrap(), expected);
+}
+
+fn ticket_of(door: &Door, token: &str) -> String {
+    let link = json_of(&door.answer(&query("/queries/get-camera-link", token)));
+    let url = link["url"].as_str().unwrap();
+    assert!(
+        url.starts_with(&format!("{ENDPOINT}:{STREAM_PORT}/camera/stream?ticket=")),
+        "{url}"
+    );
+    assert_eq!(link["expiresIn"], 30);
+    url.rsplit_once('=').unwrap().1.to_string()
+}
+
+#[test]
+fn a_camera_link_opens_once() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let path = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    assert!(door.admit_watcher(&watch(&path, None)).is_ok());
+    assert_eq!(door.admit_watcher(&watch(&path, None)).unwrap_err().status, 401);
+}
+
+#[test]
+fn a_camera_link_ends_after_its_time_and_a_new_one_replaces_it() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let late = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    board.wait(31);
+    assert_eq!(door.admit_watcher(&watch(&late, None)).unwrap_err().status, 401);
+    let replaced = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    let latest = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    assert_eq!(door.admit_watcher(&watch(&replaced, None)).unwrap_err().status, 401);
+    assert!(door.admit_watcher(&watch(&latest, None)).is_ok());
+}
+
+#[test]
+fn the_live_frames_are_not_on_the_doors_own_port() {
+    let door = Board::default().seeing(Ok(PICTURE)).door();
+    let r = door.answer(&req("GET", "/camera/stream"));
+    assert_eq!(r.status, 404);
+    assert!(json_of(&r)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("get-camera-link"));
 }

@@ -1,0 +1,3 @@
+# QEMU's build, over sdkconfig.defaults: its emulated crypto cannot read PSRAM by DMA, so TLS's buffers stay in internal RAM.
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=y
+# CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC is not set

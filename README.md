@@ -11,10 +11,11 @@ library on ESP-IDF.
 
 **Where it stands:** the door serves its manifest over HTTPS, with an ETag and a cache life, and refuses what it does
 not serve in the BEST error format. An agent signs in with the device flow, approved by a press of the robot's BOOT
-button, and reads one query, `get-status`: the robot's uptime, free memory and Wi-Fi signal. It runs on the board, a
-Freenove ESP32-S3-WROOM-1 on Wi-Fi, as `https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in
-Espressif's QEMU: best-validate 0.4.3 finds it conformant on both, the board's certificate verified. best-cli signs in
-to the board and queries it: [acceptance/sign-in.md](acceptance/sign-in.md).
+button, and reads `get-status`: the robot's uptime, free memory and Wi-Fi signal. It sees: `get-snapshot` answers a
+picture, and live frames open in a browser or OpenCV ([the camera](#the-camera)). It runs on the board, a Freenove
+ESP32-S3-WROOM-1 on Wi-Fi, as `https://robot.behavioralstate.io` with a Let's Encrypt certificate, and in Espressif's
+QEMU, without a camera: best-validate finds it conformant on both, the board's certificate verified. best-cli signs in
+to the board and queries it: [acceptance/sign-in.md](acceptance/sign-in.md), [acceptance/camera.md](acceptance/camera.md).
 
 ESP-IDF's HTTP server gives every answer it sends without a body a length of 0, where HTTP allows none or the length
 GET's answer has. So a client sending `If-None-Match` is sent the manifest whole, never a 304, with the ETag still on
@@ -25,27 +26,26 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi) | 833 KB, 5.1% of the flash | 1.1 MB, 7.1% |
-| Internal RAM free at start | 354 KB | 307 KB |
-| … with the network up and the door served | 311 KB | 226 KB |
-| … least, after TLS handshakes | 244 KB | 123 KB |
-| … least, while a person approves a sign-in in a browser and best-cli waits for it | | 60 KB |
-| PSRAM used | almost none | almost none |
-| The manifest read over a new connection, from a machine on the same network | | 0.9 to 1.2 s, the TLS handshake nearly all of it |
-| `best query robot get-status`: the manifest, the catalogue and the query, each over a new connection | | 1.1 to 1.6 s |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi and the camera) | 833 KB, 5.1% of the flash | 1.3 MB, 8.5% |
+| Internal RAM free at start | 354 KB | 283 KB |
+| … with the network up, the camera started and the door served | 311 KB | 115 KB |
+| … least, with four connections to the door and a viewer of the live frames at once | | 45 KB |
+| PSRAM used | almost none | 1.2 MB by the camera, up to 170 KB more by TLS |
+| The manifest read over a new connection, from a machine on the same network | | 1.0 to 1.3 s, the TLS handshake nearly all of it |
+| `best query robot get-status`: the manifest, the catalogue and the query, each over a new connection | | 0.9 to 1.1 s |
 
-The board's figures are with its Let's Encrypt chain, four certificates in 4.7 KB. Each open TLS connection holds
-some 30 KB of internal RAM, and the server keeps four open at most, so a sign-in, with a browser's connections and
-best-cli's at once, is what costs the board most. Timings are the board's alone: QEMU's say nothing of them.
+The board's figures are with its Let's Encrypt chain, four certificates in 4.7 KB. The server keeps four connections
+open at most, and TLS holds their buffers in PSRAM: in internal RAM a viewer and two more connections left the board
+168 bytes, and it refused the next. Timings are the board's alone: QEMU's say nothing of them.
 
 ## Layout
 
 - `crates/door`: the door, plain Rust: what each request is answered with, the sign-in and its page, and the queries.
-  It knows nothing of the board: it is given a clock, a random generator, a vault for the credentials and the
-  board's readings, and its tests run on any machine with fakes of them: `cargo test`.
+  It knows nothing of the board: it is given a clock, a random generator, a vault for the credentials, the
+  board's readings and, where there is one, a camera, and its tests run on any machine with fakes of them: `cargo test`.
 - `firmware`: the board's side, built with the esp toolchain: the network (Wi-Fi, or QEMU's Ethernet with the `qemu`
   feature), ESP-IDF's HTTPS server carrying requests to the door, the flash that keeps credentials, the BOOT button,
-  and the memory report on the serial log.
+  the camera and its server, and the memory report on the serial log.
 
 ## Try it in QEMU
 
@@ -135,3 +135,49 @@ each credential, eight at most. A durable credential (the default) is kept in th
 restart; a session credential lives 8 hours and is forgotten on a restart. Holding BOOT for 10 seconds forgets every
 credential and takes back every code armed or approved but not yet collected, so each agent signs in again. QEMU has
 no button, so an agent cannot be approved there: the door's tests prove the sign-in on any machine.
+
+## The camera
+
+The board's camera is a GC0308 at 640 by 480. A board without one, QEMU's included, declares none of what follows.
+Everything past the manifest is behind the sign-in, as the rest of the door is.
+
+An agent asks for a picture as it asks for anything else:
+
+```bash
+best query robot get-snapshot
+```
+
+It answers JSON, the picture base64 inside it, so any BEST client can read it as it is:
+
+```json
+{ "contentType": "image/jpeg", "takenAt": "2026-11-09T12:25:37.090Z", "width": 640, "height": 480, "data": "/9j/4AAQ..." }
+```
+
+`takenAt` is `null` until the board has the time from the network. A camera that gives no picture is answered with a
+503, `CAMERA_UNAVAILABLE`.
+
+Live frames are this robot's own, outside the spec: the custom capability `io.behavioralstate.robot.camera`, a service
+of its own in the manifest, serving `GET /camera/stream` as MJPEG (`multipart/x-mixed-replace`) over HTTPS. A browser
+and OpenCV open it as they are. Neither can send a credential, so an agent asks for a link and gives it to them:
+
+```bash
+best query robot get-camera-link
+```
+
+The link answered is `https://robot.behavioralstate.io:8443/camera/stream?ticket=...`, good once and for 30 seconds; a
+later link replaces it. A client that can send the credential opens `/camera/stream` with it, without a link. The stream
+is on a port of its own, because a server's task is held for as long as a viewer watches: the door's other answers
+never wait for it. There is one viewer at a time. Frames are never on `/events/stream`.
+
+Measured on the board, from a machine on the same network:
+
+| | |
+|---|---|
+| A frame in PSRAM | 614 KB raw, two of them held; 19 to 25 KB as a JPEG, at quality 60 |
+| Encoding a frame on the CPU | 341 ms at 240 MHz (552 ms at 160 MHz, with C built for debugging and PSRAM at 40 MHz) |
+| Live frames | 2.2 a second at 640 by 480, in OpenCV and to `curl` alike |
+| `best query robot get-snapshot`: the manifest, the catalogue and the query, each over a new connection | 1.5 to 2.1 s, some 0.7 s more than `get-status` |
+
+The sensor has no JPEG of its own, so each frame is encoded by the CPU, and that is what holds the frame rate. The
+camera's clock is 24 MHz and not the usual 20: at 20 its harmonic at 2460 MHz fell inside Wi-Fi channel 11, the
+network's here, and the board lost half its packets, with answers up to 3 s late. At 24 it lost none of 15 pings.

@@ -18,6 +18,8 @@ use esp_idf_svc::tls::X509;
 mod board;
 #[cfg(not(feature = "qemu"))]
 mod button;
+#[cfg(not(feature = "qemu"))]
+mod camera;
 mod network;
 
 /// The name the door is known by and the address it is served at, set when the firmware is built.
@@ -50,6 +52,9 @@ const KEY: &[u8] = include_bytes!(certs!("key.pem"));
 /// The largest body the door reads: a sign-in form is a few hundred bytes.
 const BODY_LIMIT: usize = 4096;
 
+/// The stack of a server's task: the JPEG encoder keeps about 12 KB on it, on top of what TLS needs.
+const SERVER_STACK: usize = 24 * 1024;
+
 fn main() -> anyhow::Result<()> {
     sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -61,6 +66,16 @@ fn main() -> anyhow::Result<()> {
     let _network = network::up(peripherals.modem, peripherals.mac, sysloop, nvs.clone())?;
     report("network up");
 
+    // QEMU emulates no camera, and has no time to take from the network.
+    #[cfg(feature = "qemu")]
+    let camera = None;
+    #[cfg(not(feature = "qemu"))]
+    let camera = camera::start_camera();
+    #[cfg(not(feature = "qemu"))]
+    let _time = esp_idf_svc::sntp::EspSntp::new_default()?;
+    let sees = camera.is_some();
+    report("camera up");
+
     let door = Arc::new(Door::new(
         NAME,
         ENDPOINT,
@@ -69,6 +84,7 @@ fn main() -> anyhow::Result<()> {
             entropy: Box::new(board::Board),
             vault: Box::new(board::Flash::open(nvs)?),
             readings: Box::new(board::Board),
+            camera,
         },
     ));
     // QEMU emulates no button.
@@ -76,6 +92,7 @@ fn main() -> anyhow::Result<()> {
     button::watch(peripherals.pins.gpio0, door.clone())?;
 
     let mut server = EspHttpServer::new(&Configuration {
+        stack_size: SERVER_STACK,
         uri_match_wildcard: true,
         server_certificate: Some(X509::pem_until_nul(CERT)),
         private_key: Some(X509::pem_until_nul(KEY)),
@@ -119,6 +136,10 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         })?;
     }
+    #[cfg(not(feature = "qemu"))]
+    let _frames = sees.then(|| camera::serve_frames(door.clone())).transpose()?;
+    #[cfg(feature = "qemu")]
+    let _ = sees;
     report("door served");
     log::info!("the door is served at {ENDPOINT}/.well-known/best");
 

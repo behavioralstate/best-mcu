@@ -2,6 +2,7 @@
 //! [`Door::answer`] and the button's presses to [`Door::press`], and sends back what they return; nothing here knows
 //! the HTTP server, the network or the pins. What the door needs of the board comes through [`Ports`].
 
+mod camera;
 mod guidance;
 mod page;
 mod signin;
@@ -10,6 +11,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use std::collections::BTreeMap;
 
+use camera::Ticket;
+pub use camera::{Frame, FRAMES_TYPE, STREAM_PORT};
 use serde_json::{json, Value};
 use signin::{OAuthError, Refusal, SignIn};
 
@@ -41,9 +44,12 @@ pub struct Response {
     pub body: Option<String>,
 }
 
-/// Milliseconds since the board started.
+/// The board's clocks.
 pub trait Clock: Send + Sync {
+    /// Milliseconds since the board started.
     fn now_ms(&self) -> u64;
+    /// Milliseconds since the epoch, when the board knows the time.
+    fn utc_ms(&self) -> Option<u64>;
 }
 
 /// Random bytes, unguessable: the board's generator.
@@ -60,6 +66,12 @@ pub trait Vault: Send + Sync {
 /// What the robot reads about itself.
 pub trait Readings: Send + Sync {
     fn read(&self) -> Status;
+}
+
+/// The robot's camera.
+pub trait Camera: Send + Sync {
+    /// The newest picture, or why there is none.
+    fn take(&self) -> Result<Frame, String>;
 }
 
 /// The robot's readings of itself, as `get-status` answers them.
@@ -79,6 +91,8 @@ pub struct Ports {
     pub entropy: Box<dyn Entropy>,
     pub vault: Box<dyn Vault>,
     pub readings: Box<dyn Readings>,
+    /// The camera, on a board that has one working.
+    pub camera: Option<Box<dyn Camera>>,
 }
 
 /// The door of one board, served at `endpoint` and named by `name`, the DNS name it is known by.
@@ -88,12 +102,13 @@ pub struct Door {
     etag: String,
     ports: Ports,
     signin: Mutex<SignIn>,
+    ticket: Mutex<Ticket>,
 }
 
 impl Door {
     pub fn new(name: &str, endpoint: &str, ports: Ports) -> Self {
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let manifest = manifest(name, &endpoint).to_string();
+        let manifest = manifest(name, &endpoint, ports.camera.is_some()).to_string();
         let etag = format!("\"{:016x}\"", fnv1a(manifest.as_bytes()));
         let signin = Mutex::new(SignIn::restore(&ports.vault.read().unwrap_or_default()));
         Self {
@@ -102,6 +117,7 @@ impl Door {
             etag,
             ports,
             signin,
+            ticket: Mutex::default(),
         }
     }
 
@@ -117,6 +133,11 @@ impl Door {
             ("POST", "/approve") => self.decide(req),
             (_, "/approve") => not_allowed("GET, HEAD, POST", "the page is read with GET, answered with POST"),
             (_, path) if path == "/queries" || path.starts_with("/queries/") => self.queries(req),
+            (_, "/camera/stream") if self.ports.camera.is_some() => error(
+                404,
+                "NOT_FOUND",
+                "live frames have a server of their own: the query get-camera-link gives their address",
+            ),
             _ => error(
                 404,
                 "NOT_FOUND",
@@ -139,6 +160,31 @@ impl Door {
         self.ports.vault.write(&s.kept()).map_err(|e| {
             format!("every credential is refused until the robot restarts, but the kept ones could not be erased: {e}")
         })
+    }
+
+    /// Whether a request may watch the live frames: by a credential, or by the link of `get-camera-link`, for clients
+    /// that send no header. The refusal, when not. The firmware then asks [`Door::next_part`] for as long as it is
+    /// watched.
+    pub fn admit_watcher(&self, req: &Request) -> Result<(), Response> {
+        if self.ports.camera.is_none() {
+            return Err(error(404, "NOT_FOUND", "this robot has no camera working"));
+        }
+        let now = self.ports.clock.now_ms();
+        let query = form(req.query.as_bytes());
+        let by_link = query.get("ticket").is_some_and(|t| self.ticket().redeem(now, t));
+        if by_link || self.credential_of(req, now) {
+            return Ok(());
+        }
+        Err(unauthorized(
+            "a credential is required: Authorization: Bearer <token>, or the address the query get-camera-link answers, \
+             opened once and at once",
+        ))
+    }
+
+    /// The next part of the live frames, or why there is none.
+    pub fn next_part(&self) -> Result<Vec<u8>, String> {
+        let camera = self.ports.camera.as_deref().ok_or("this robot has no camera working")?;
+        camera.take().map(|frame| camera::part(&frame))
     }
 
     /// The manifest, whole, with an ETag and a cache life so a client can tell it changed. An `If-None-Match` is
@@ -298,46 +344,84 @@ impl Door {
         html(page::approve(s.find(code), Some(code), now, notice.as_deref()))
     }
 
-    fn queries(&self, req: &Request) -> Response {
-        // The scheme is matched without regard to case (RFC 9110 §11.1).
-        let token = req
-            .authorization
+    /// Whether the request carries a credential the robot holds. The scheme is matched without regard to case (RFC
+    /// 9110 §11.1).
+    fn credential_of(&self, req: &Request, now: u64) -> bool {
+        req.authorization
             .and_then(|a| a.trim().split_once(' '))
             .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
-            .map(|(_, token)| token.trim());
+            .is_some_and(|(_, token)| self.signin().admits(now, token.trim()))
+    }
+
+    fn ticket(&self) -> MutexGuard<'_, Ticket> {
+        self.ticket.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn queries(&self, req: &Request) -> Response {
         let now = self.ports.clock.now_ms();
-        if !token.is_some_and(|t| self.signin().admits(now, t)) {
-            return Response {
-                headers: vec![("WWW-Authenticate", "Bearer".into())],
-                ..error(
-                    401,
-                    "UNAUTHORIZED",
-                    "a credential is required: Authorization: Bearer <token>, obtained by the sign-in the manifest's \
-                     authentication block declares",
-                )
-            };
+        if !self.credential_of(req, now) {
+            return unauthorized(
+                "a credential is required: Authorization: Bearer <token>, obtained by the sign-in the manifest's \
+                 authentication block declares",
+            );
         }
         if !matches!(req.method, "GET" | "HEAD") {
             return not_allowed("GET, HEAD", "queries are read with GET");
         }
-        match req.path {
-            "/queries" => json_ok(
-                json!({ "queries": [{
-                    "schema": "get-status",
-                    "version": "1.0",
-                    "dataschema": format!("{}/queries/get-status/1.0", self.endpoint),
-                    "description": STATUS_DESCRIPTION,
-                }] })
-                .to_string(),
-            ),
-            "/queries/get-status/1.0" => json_ok(status_schema().to_string()),
-            "/queries/get-status" => json_ok(status(&self.ports.readings.read()).to_string()),
+        let camera = self.ports.camera.as_deref();
+        match (req.path, camera) {
+            ("/queries", _) => json_ok(json!({ "queries": self.catalogue() }).to_string()),
+            ("/queries/get-status/1.0", _) => json_ok(status_schema().to_string()),
+            ("/queries/get-status", _) => json_ok(status(&self.ports.readings.read()).to_string()),
+            ("/queries/get-snapshot/1.0", Some(_)) => json_ok(camera::snapshot_schema().to_string()),
+            ("/queries/get-snapshot", Some(camera)) => self.snapshot(camera),
+            ("/queries/get-camera-link/1.0", Some(_)) => json_ok(camera::link_schema().to_string()),
+            ("/queries/get-camera-link", Some(_)) => self.camera_link(now),
             _ => error(
                 404,
                 "SCHEMA_NOT_FOUND",
-                "the robot answers one query, get-status: GET /queries lists it",
+                "the robot answers no such query: GET /queries lists what it answers",
             ),
         }
+    }
+
+    fn catalogue(&self) -> Vec<Value> {
+        let entry = |schema: &str, description: &str| {
+            json!({
+                "schema": schema,
+                "version": "1.0",
+                "dataschema": format!("{}/queries/{schema}/1.0", self.endpoint),
+                "description": description,
+            })
+        };
+        let mut queries = vec![entry("get-status", STATUS_DESCRIPTION)];
+        if self.ports.camera.is_some() {
+            queries.push(entry("get-snapshot", camera::SNAPSHOT_DESCRIPTION));
+            queries.push(entry("get-camera-link", camera::LINK_DESCRIPTION));
+        }
+        queries
+    }
+
+    fn snapshot(&self, camera: &dyn Camera) -> Response {
+        match camera.take() {
+            Ok(frame) => Response {
+                headers: vec![("Cache-Control", "no-store".into())],
+                ..json_ok(camera::snapshot(&frame, self.ports.clock.utc_ms()))
+            },
+            Err(e) => error(
+                503,
+                "CAMERA_UNAVAILABLE",
+                &format!("the camera gave no picture ({e}): try again in a moment"),
+            ),
+        }
+    }
+
+    fn camera_link(&self, now: u64) -> Response {
+        let ticket = self.ticket().issue(now, &mut self.random());
+        no_store(json!({
+            "url": format!("{}:{STREAM_PORT}/camera/stream?ticket={ticket}", self.endpoint),
+            "expiresIn": camera::LINK_LIFE_S,
+        }))
     }
 }
 
@@ -394,9 +478,9 @@ fn service_key(name: &str) -> String {
     name.rsplit('.').collect::<Vec<_>>().join(".")
 }
 
-fn manifest(name: &str, endpoint: &str) -> Value {
+fn manifest(name: &str, endpoint: &str, has_camera: bool) -> Value {
     let service = service_key(name);
-    json!({
+    let mut manifest = json!({
         "best": {
             "version": BEST_VERSION,
             "authentication": {
@@ -428,7 +512,25 @@ fn manifest(name: &str, endpoint: &str) -> Value {
                 ]
             }]
         }
-    })
+    });
+    if has_camera {
+        // A service of its own: its frames are served on a port of their own, and are not JSON.
+        let camera = format!("{service}.camera");
+        manifest["best"]["services"][&camera] = json!({
+            "version": "0.0.1",
+            "description": "The robot's camera, live.",
+            "http": { "endpoint": format!("{endpoint}:{STREAM_PORT}") }
+        });
+        manifest["best"]["capabilities"].as_array_mut().unwrap().push(json!({
+            "name": camera,
+            "version": "1.0.0",
+            "description": "Watch what the robot sees, as it sees it.",
+            "service": camera,
+            "status": "active",
+            "endpoints": [{ "method": "GET", "path": "/camera/stream" }]
+        }));
+    }
+    manifest
 }
 
 /// A form body, refused as RFC 6749 §5.2 asks when it is not one.
@@ -517,6 +619,13 @@ fn html(body: String) -> Response {
         content_type: HTML,
         headers: vec![("Cache-Control", "no-store".into())],
         body: Some(body),
+    }
+}
+
+fn unauthorized(message: &str) -> Response {
+    Response {
+        headers: vec![("WWW-Authenticate", "Bearer".into())],
+        ..error(401, "UNAUTHORIZED", message)
     }
 }
 
