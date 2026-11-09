@@ -1329,8 +1329,75 @@ fn a_short_press_stops_the_head_and_approves_no_sign_in_armed_from_the_network()
 #[test]
 fn a_hold_with_no_sign_in_armed_does_nothing() {
     let (_, neck, door, _) = turning();
-    assert_eq!(door.released_after(APPROVE_AFTER_MS), Pressed::NothingToApprove);
+    assert!(!door.button_down());
+    assert_eq!(door.released_after(APPROVE_AFTER_MS), Pressed::NothingApproved);
     assert_eq!(neck.rests.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn the_head_lets_go_when_the_button_goes_down_however_long_it_is_held() {
+    for held in [100, APPROVE_AFTER_MS, 12_000] {
+        let (board, neck, door, token) = turning();
+        assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+
+        assert!(door.button_down());
+        assert_eq!(
+            neck.rests.load(Ordering::SeqCst),
+            1,
+            "it lets go before the button comes up"
+        );
+        board.wait(1);
+        let r = send(&door, &token, &envelope("b", "left"));
+        assert_eq!(json_of(&r)["error"]["code"], "STOPPED", "held {held}");
+
+        let expected = if held < APPROVE_AFTER_MS {
+            Pressed::Stopped
+        } else {
+            Pressed::NothingApproved
+        };
+        assert_eq!(door.released_after(held), expected);
+        let r = send(&door, &token, &envelope("b", "left"));
+        assert_eq!(
+            json_of(&r)["error"]["code"],
+            "STOPPED",
+            "letting go did not let the head go on"
+        );
+
+        assert!(!door.button_down());
+        assert_eq!(door.released_after(100), Pressed::LetGo);
+        assert_eq!(neck.rests.load(Ordering::SeqCst), 1);
+        assert_eq!(send(&door, &token, &envelope("b", "left")).status, 201);
+    }
+}
+
+#[test]
+fn a_hold_that_approves_still_stops_a_head_holding_a_position() {
+    let (_, neck, door, token) = turning();
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    let reg = register(&door, "client_id=best&connection=stranger");
+    let user = reg["user_code"].as_str().unwrap();
+    approve(&door, user);
+
+    assert!(door.button_down());
+    assert_eq!(
+        door.released_after(APPROVE_AFTER_MS),
+        Pressed::Approved(user.to_string())
+    );
+    assert_eq!(neck.rests.load(Ordering::SeqCst), 1);
+    let r = send(&door, &token, &envelope("b", "left"));
+    assert_eq!(json_of(&r)["error"]["code"], "STOPPED");
+}
+
+#[test]
+fn a_press_after_the_hold_that_forgot_is_counted_afresh() {
+    let (board, _, door, token) = turning();
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    assert!(door.button_down());
+    // A hold that reached the forget is never reported as let go of.
+    assert!(!door.button_down());
+    assert_eq!(door.released_after(100), Pressed::LetGo);
+    board.wait(1);
+    assert_eq!(send(&door, &token, &envelope("b", "left")).status, 201);
 }
 
 #[test]

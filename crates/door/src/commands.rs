@@ -96,6 +96,10 @@ pub(crate) struct Ledger {
     records: VecDeque<Record>,
     last_sent: BTreeMap<String, u64>,
     stopped: bool,
+    /// The head was told where to look and has not let go since.
+    holding: bool,
+    /// The press under way is the one that stopped the head.
+    stopped_by_this_press: bool,
 }
 
 impl Ledger {
@@ -241,13 +245,35 @@ pub(crate) fn capabilities(service: &str) -> [Value; 2] {
 }
 
 impl Door {
-    /// The robot's button, pressed briefly: stops the head and refuses it commands, or lets them through
-    /// again. Whether it is now stopped; none on a robot with no head.
-    pub fn stop_or_release(&self) -> Option<bool> {
+    /// The robot's button has gone down: a head holding a position lets go at once, however long the press turns out
+    /// to be. Whether it did.
+    pub fn button_down(&self) -> bool {
+        let Some(head) = self.ports.head.as_deref() else {
+            return false;
+        };
+        let mut ledger = self.ledger();
+        ledger.stopped_by_this_press = ledger.holding;
+        if ledger.holding {
+            ledger.holding = false;
+            ledger.stopped = true;
+            head.rest();
+        }
+        ledger.stopped_by_this_press
+    }
+
+    /// Whether the press just let go of is the one that stopped the head.
+    pub(crate) fn this_press_stopped(&self) -> bool {
+        std::mem::take(&mut self.ledger().stopped_by_this_press)
+    }
+
+    /// A short press of the robot's button: stops the head and refuses it commands, or lets them through again.
+    /// Whether it is now stopped; none on a robot with no head.
+    pub(crate) fn stop_or_release(&self) -> Option<bool> {
         let head = self.ports.head.as_deref()?;
         let mut ledger = self.ledger();
         ledger.stopped = !ledger.stopped;
         if ledger.stopped {
+            ledger.holding = false;
             head.rest();
         }
         Some(ledger.stopped)
@@ -425,7 +451,10 @@ impl Door {
             .as_deref()
             .expect("commands are routed here only with a head");
         let (kind, data) = match head.look(toward) {
-            Ok(()) => ("Looked", json!({ "toward": named })),
+            Ok(()) => {
+                ledger.holding = true;
+                ("Looked", json!({ "toward": named }))
+            }
             Err(reason) => ("LookFailed", json!({ "toward": named, "reason": reason })),
         };
         let mut event_id = [0u8; 16];

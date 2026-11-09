@@ -107,6 +107,9 @@ was sent every few seconds. The person at the robot gave two short presses and t
   refusal's code. At 38.6 s, after the second, one was taken again.
 - At 44.3 s, after the hold, the sign-in was approved. Its credential was thrown away unread.
 
+The stop was then moved to the moment the button goes down, so that a hold of any length stops the servo too, and the
+firmware flashed again. With the joint holding a position and BOOT held for 3 seconds, the person at the robot felt the joint go loose as soon as the button went down, before it was let go.
+
 ## Through a restart
 
 With no servo attached, on an earlier build with the same command code: ten more commands, `many-1` to `many-10`, then the board restarted. It
@@ -114,7 +117,7 @@ still held eight events, `many-3` to `many-10`, and `many-10` sent again was ans
 
 ## What it costs
 
-The firmware image is 1,481,104 bytes, 9.04% of the app partition. Internal RAM free was 282 KB at start and 100 KB with
+The firmware image is 1,481,008 bytes, 9.04% of the app partition. Internal RAM free was 282 KB at start and 100 KB with
 the door served. A viewer of the live frames with four more TLS connections held open to the door, after the commands
 above: all four were answered, the viewer had 52 frames in 24 s, the least internal RAM free since start was 39,904
 bytes, and the board did not restart.

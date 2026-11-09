@@ -1,5 +1,5 @@
 //! Signing an agent in (SPEC.md, Agent Registration): RFC 8628's device flow, approved on the robot itself. The person
-//! opens the link the agent shows, arms the code they see there, and presses the robot's button: whoever holds the
+//! opens the link the agent shows, arms the code they see there, and holds the robot's button: whoever holds the
 //! robot approves. Only a hash of each credential is kept; durable ones survive a restart through the vault, session
 //! ones live in memory and end with it.
 

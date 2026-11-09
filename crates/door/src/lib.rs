@@ -1,5 +1,5 @@
 //! The door: what a request is answered with, apart from the board. The firmware hands each request to
-//! [`Door::answer`] and the button's presses to [`Door::released_after`], and sends back what they return; nothing here knows
+//! [`Door::answer`] and the button's presses to [`Door::button_down`] and [`Door::released_after`], and sends back what they return; nothing here knows
 //! the HTTP server, the network or the pins. What the door needs of the board comes through [`Ports`].
 
 mod camera;
@@ -97,8 +97,8 @@ pub const APPROVE_AFTER_MS: u64 = 2_000;
 pub enum Pressed {
     /// A sign-in was approved: its user code.
     Approved(String),
-    /// Held, with no sign-in armed.
-    NothingToApprove,
+    /// Held, and no sign-in was approved.
+    NothingApproved,
     /// The head let go and refuses commands.
     Stopped,
     /// The head takes commands again.
@@ -183,7 +183,10 @@ impl Door {
     /// the door can arm a code, so a press that might approve one could not be counted on to stop the head.
     pub fn released_after(&self, held_ms: u64) -> Pressed {
         if held_ms >= APPROVE_AFTER_MS {
-            return self.press().map_or(Pressed::NothingToApprove, Pressed::Approved);
+            return self.press().map_or(Pressed::NothingApproved, Pressed::Approved);
+        }
+        if self.this_press_stopped() {
+            return Pressed::Stopped;
         }
         match self.stop_or_release() {
             Some(true) => Pressed::Stopped,

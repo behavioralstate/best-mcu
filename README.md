@@ -123,8 +123,8 @@ A board without a name is reached by its address instead, with a self-signed cer
 
 The manifest declares the device flow (RFC 8628): the agent asks the robot for a code and gives the person a link to
 the robot's own page, `/approve?code=...`, which shows who asks and the code. The person checks the code against what
-the agent shows and clicks Approve, then holds the robot's BOOT button for 3 seconds, within 30 seconds of the click: the
-hold is what approves, so only someone at the robot can let an agent in. A short press approves nothing, because it is
+the agent shows and clicks Approve, then holds the robot's BOOT button for 3 seconds and lets go, within 30 seconds of the
+click: the hold is what approves, so only someone at the robot can let an agent in. A short press approves nothing, because it is
 [the stop](#the-servo), and anyone who can reach the robot can arm a code. Deny refuses it. With best-cli:
 
 ```bash
@@ -229,10 +229,12 @@ correlation id is 64 bytes at most. Until the board has the time from the networ
 `400`, `TIME_UNKNOWN`, since every event carries it. If the flash does not take a command the answer is `202` and not
 `201`: the servo has already moved. There is no live stream of events; a client reads `GET /events` again.
 
-**The stop is the BOOT button.** One short press, with a sign-in waiting or not, takes the pulses off the servo, which
-goes loose, and every command is refused with a `400`, `STOPPED`. A second press lets commands through again and moves
-nothing: the servo stays loose until the next one. It works with the network down, and a restart clears it, with the
-servo still sent nothing until a command. It stops the signal and not the power, so a switch in the servo's own supply
+**The stop is the BOOT button.** The moment it goes down, with a sign-in waiting or not and however long it is then
+held, a servo holding a position has the pulses taken off it and goes loose, and every command is refused with a `400`,
+`STOPPED`. A short press does the same to a servo already loose. Stopped, a short press lets commands through again and
+moves nothing: the servo stays loose until the next one. A hold that approves a sign-in stops a servo holding a position
+all the same. The stop works with the network down, and a restart clears it, with the servo still sent nothing until a
+command. It stops the signal and not the power, so a switch in the servo's own supply
 is the way to cut that.
 
 Everything the spec asks of commands and events fit on the board: nothing was left out for want of flash or RAM.

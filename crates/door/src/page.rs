@@ -47,10 +47,11 @@ fn about(r: &Registration, now: u64) -> String {
         State::Pending => format!(
             "<form method=post action=approve><input type=hidden name=code value=\"{code}\"><button name=action \
              value=approve>Approve</button><button name=action value=deny>Deny</button></form><p>Approve, then \
-             hold the robot's BOOT button for 3 seconds, within {ARMED_FOR_S} seconds: the hold is what approves.</p>"
+             hold the robot's BOOT button for 3 seconds and let go, within {ARMED_FOR_S} seconds: the hold is what \
+             approves.</p>"
         ),
         State::Armed { until_ms } => format!(
-            "<p><b>Hold the robot's BOOT button for 3 seconds now</b>: {} seconds left. This page shows the outcome when it \
+            "<p><b>Hold the robot's BOOT button for 3 seconds now, then let go</b>: {} seconds left. This page shows the outcome when it \
              reloads.</p><meta http-equiv=refresh content=\"3; url=approve?code={code}\">",
             until_ms.saturating_sub(now).div_ceil(1000)
         ),
