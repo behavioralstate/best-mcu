@@ -1371,6 +1371,37 @@ fn the_head_lets_go_when_the_button_goes_down_however_long_it_is_held() {
 }
 
 #[test]
+fn no_command_moves_an_idle_head_while_the_button_is_down() {
+    let (board, neck, door, token) = turning();
+    assert!(!door.button_down(), "an idle head has nothing to let go of");
+    let r = send(&door, &token, &envelope("a", "left"));
+    assert_eq!(
+        (r.status, json_of(&r)["error"]["code"].as_str()),
+        (400, Some("STOPPED"))
+    );
+    assert!(json_of(&r)["error"]["message"].as_str().unwrap().contains("let go"));
+    assert!(neck.moved().is_empty());
+
+    assert_eq!(door.released_after(APPROVE_AFTER_MS), Pressed::NothingApproved);
+    board.wait(1);
+    assert_eq!(
+        send(&door, &token, &envelope("a", "left")).status,
+        201,
+        "a refused id is free"
+    );
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
+fn the_button_coming_up_after_the_hold_that_forgot_lets_commands_through() {
+    let (_, neck, door, token) = turning();
+    assert!(!door.button_down());
+    door.button_up();
+    assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);
+    assert_eq!(neck.moved(), [Toward::Left]);
+}
+
+#[test]
 fn a_hold_that_approves_still_stops_a_head_holding_a_position() {
     let (_, neck, door, token) = turning();
     assert_eq!(send(&door, &token, &envelope("a", "left")).status, 201);

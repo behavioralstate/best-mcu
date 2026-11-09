@@ -231,7 +231,8 @@ correlation id is 64 bytes at most. Until the board has the time from the networ
 
 **The stop is the BOOT button.** The moment it goes down, with a sign-in waiting or not and however long it is then
 held, a servo holding a position has the pulses taken off it and goes loose, and every command is refused with a `400`,
-`STOPPED`. A short press does the same to a servo already loose. Stopped, a short press lets commands through again and
+`STOPPED`. Every command is refused for as long as the button is down. A short press does to a loose servo what going
+down does to a holding one. Stopped, a short press lets commands through again and
 moves nothing: the servo stays loose until the next one. A hold that approves a sign-in stops a servo holding a position
 all the same. The stop works with the network down, and a restart clears it, with the servo still sent nothing until a
 command. It stops the signal and not the power, so a switch in the servo's own supply

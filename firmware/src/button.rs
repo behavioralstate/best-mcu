@@ -45,7 +45,9 @@ fn follow(button: PinDriver<'static, Input>, door: &Door) {
             continue;
         }
         // Released: a press past a bounce, and not the hold that already forgot.
-        if down && !forgot {
+        if forgot {
+            door.button_up();
+        } else if down {
             match door.released_after(held.as_millis() as u64) {
                 Pressed::Approved(code) => log::info!("the button approved the sign-in {code}"),
                 Pressed::NothingApproved => log::info!("the button was held; it approved no sign-in"),

@@ -100,6 +100,8 @@ pub(crate) struct Ledger {
     holding: bool,
     /// The press under way is the one that stopped the head.
     stopped_by_this_press: bool,
+    /// The robot's button is down: no command moves the head for as long as it is.
+    button_is_down: bool,
 }
 
 impl Ledger {
@@ -252,6 +254,7 @@ impl Door {
             return false;
         };
         let mut ledger = self.ledger();
+        ledger.button_is_down = true;
         ledger.stopped_by_this_press = ledger.holding;
         if ledger.holding {
             ledger.holding = false;
@@ -259,6 +262,11 @@ impl Door {
             head.rest();
         }
         ledger.stopped_by_this_press
+    }
+
+    /// The robot's button has come up.
+    pub fn button_up(&self) {
+        self.ledger().button_is_down = false;
     }
 
     /// Whether the press just let go of is the one that stopped the head.
@@ -416,6 +424,14 @@ impl Door {
             return Err(invalid(
                 "correlationid",
                 "this correlation id is another sender's: use one of your own",
+            ));
+        }
+        if ledger.button_is_down {
+            return Err(refused(
+                400,
+                "STOPPED",
+                "someone at the robot has its button down: send this again once it is let go",
+                json!({}),
             ));
         }
         if ledger.stopped {
