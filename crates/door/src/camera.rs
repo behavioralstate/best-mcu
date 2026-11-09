@@ -86,29 +86,50 @@ pub(crate) fn link_schema() -> Value {
     })
 }
 
-/// The one link waiting to be opened: the hash of its secret and when it ends. A new link replaces the last.
+/// Someone admitted to the live frames, by the credential they are watched under: a link's is the credential that
+/// asked for it. The frames end when it does.
+#[derive(Debug)]
+pub struct Watcher(pub(crate) [u8; 32]);
+
+/// The address of the live frames: the endpoint's host, on their own port.
+pub(crate) fn frames_origin(endpoint: &str) -> String {
+    let host = endpoint
+        .rsplit_once(':')
+        .filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(endpoint, |(host, _)| host);
+    format!("{host}:{STREAM_PORT}")
+}
+
+struct Waiting {
+    secret: [u8; 32],
+    ends_ms: u64,
+    asker: [u8; 32],
+}
+
+/// The one link waiting to be opened: the hash of its secret, when it ends and the credential that asked for it. A new
+/// link replaces the last.
 #[derive(Default)]
-pub(crate) struct Ticket(Option<([u8; 32], u64)>);
+pub(crate) struct Ticket(Option<Waiting>);
 
 impl Ticket {
-    pub(crate) fn issue(&mut self, now_ms: u64, random: &mut dyn FnMut(&mut [u8])) -> String {
+    pub(crate) fn issue(&mut self, now_ms: u64, asker: [u8; 32], random: &mut dyn FnMut(&mut [u8])) -> String {
         let mut secret = [0u8; 16];
         random(&mut secret);
         let secret: String = secret.iter().map(|b| format!("{b:02x}")).collect();
-        self.0 = Some((Sha256::digest(secret.as_bytes()).into(), now_ms + LINK_LIFE_S * 1000));
+        self.0 = Some(Waiting {
+            secret: Sha256::digest(secret.as_bytes()).into(),
+            ends_ms: now_ms + LINK_LIFE_S * 1000,
+            asker,
+        });
         secret
     }
 
-    /// Whether `given` is the link waiting, in time; either way a matching link is spent.
-    pub(crate) fn redeem(&mut self, now_ms: u64, given: &str) -> bool {
+    /// The credential that asked for the link waiting, when `given` is that link, in time; either way a matching link
+    /// is spent.
+    pub(crate) fn redeem(&mut self, now_ms: u64, given: &str) -> Option<[u8; 32]> {
         let hash: [u8; 32] = Sha256::digest(given.as_bytes()).into();
-        match self.0 {
-            Some((held, ends)) if held == hash => {
-                self.0 = None;
-                now_ms < ends
-            }
-            _ => false,
-        }
+        let waiting = self.0.take_if(|w| w.secret == hash)?;
+        (now_ms < waiting.ends_ms).then_some(waiting.asker)
     }
 }
 

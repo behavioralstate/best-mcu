@@ -77,9 +77,13 @@ impl Board {
     }
 
     fn door(&self) -> Door {
+        self.door_at(ENDPOINT)
+    }
+
+    fn door_at(&self, endpoint: &str) -> Door {
         Door::new(
             "robot.example.com",
-            ENDPOINT,
+            endpoint,
             Ports {
                 clock: Box::new(self.clone()),
                 entropy: Box::new(self.clone()),
@@ -681,7 +685,7 @@ fn a_credential_opens_the_live_frames_and_each_part_is_one_jpeg() {
     let board = Board::default().seeing(Ok(PICTURE));
     let door = board.door();
     let token = token_of(&board, &door);
-    assert!(door.admit_watcher(&watch("/camera/stream", Some(&token))).is_ok());
+    let watcher = door.admit_watcher(&watch("/camera/stream", Some(&token))).unwrap();
     let mut expected = format!(
         "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
         PICTURE.len()
@@ -689,7 +693,7 @@ fn a_credential_opens_the_live_frames_and_each_part_is_one_jpeg() {
     .into_bytes();
     expected.extend_from_slice(PICTURE);
     expected.extend_from_slice(b"\r\n");
-    assert_eq!(door.next_part().unwrap(), expected);
+    assert_eq!(door.next_part(&watcher).unwrap(), expected);
 }
 
 fn ticket_of(door: &Door, token: &str) -> String {
@@ -736,4 +740,60 @@ fn the_live_frames_are_not_on_the_doors_own_port() {
         .as_str()
         .unwrap()
         .contains("get-camera-link"));
+}
+
+#[test]
+fn live_frames_opened_with_a_credential_end_when_it_is_forgotten() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let watcher = door.admit_watcher(&watch("/camera/stream", Some(&token))).unwrap();
+    assert!(door.next_part(&watcher).is_ok());
+    door.forget_credentials().unwrap();
+    assert!(door.next_part(&watcher).unwrap_err().contains("ended"));
+}
+
+#[test]
+fn live_frames_opened_with_a_link_end_with_the_credential_that_asked_for_it() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let path = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    let watcher = door.admit_watcher(&watch(&path, None)).unwrap();
+    assert!(door.next_part(&watcher).is_ok());
+    door.forget_credentials().unwrap();
+    assert!(door.next_part(&watcher).is_err());
+}
+
+#[test]
+fn live_frames_end_when_a_session_credential_runs_out() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let t = signed_in(&board, &door, "client_id=claude&credential_lifetime=session");
+    let token = format!("Bearer {}", t["access_token"].as_str().unwrap());
+    let watcher = door.admit_watcher(&watch("/camera/stream", Some(&token))).unwrap();
+    assert!(door.next_part(&watcher).is_ok());
+    board.wait(t["expires_in"].as_u64().unwrap());
+    assert!(door.next_part(&watcher).is_err());
+}
+
+#[test]
+fn a_camera_link_taken_before_the_credentials_are_forgotten_opens_nothing() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door();
+    let token = token_of(&board, &door);
+    let path = format!("/camera/stream?ticket={}", ticket_of(&door, &token));
+    door.forget_credentials().unwrap();
+    assert_eq!(door.admit_watcher(&watch(&path, None)).unwrap_err().status, 401);
+}
+
+#[test]
+fn the_live_frames_keep_their_port_when_the_endpoint_names_one() {
+    let board = Board::default().seeing(Ok(PICTURE));
+    let door = board.door_at("https://robot.example.com:444");
+    let m = json_of(&door.answer(&req("GET", "/.well-known/best")));
+    assert_eq!(
+        m["best"]["services"]["com.example.robot.camera"]["http"]["endpoint"],
+        format!("https://robot.example.com:{STREAM_PORT}")
+    );
 }

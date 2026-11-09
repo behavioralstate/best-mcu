@@ -342,10 +342,15 @@ impl SignIn {
     }
 
     /// Whether `token` is a credential the robot issued and still holds.
-    pub fn admits(&mut self, now: u64, token: &str) -> bool {
-        self.credentials.retain(|c| c.expires_ms.is_none_or(|end| now < end));
+    pub fn admits(&mut self, now: u64, token: &str) -> Option<[u8; 32]> {
         let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-        self.credentials.iter().any(|c| c.hash == hash)
+        self.holds(now, &hash).then_some(hash)
+    }
+
+    /// Whether the credential of this hash is still held at `now`.
+    pub fn holds(&mut self, now: u64, hash: &[u8; 32]) -> bool {
+        self.credentials.retain(|c| c.expires_ms.is_none_or(|end| now < end));
+        self.credentials.iter().any(|c| c.hash == *hash)
     }
 
     /// A credential just issued is taken back.

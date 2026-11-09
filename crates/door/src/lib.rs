@@ -12,7 +12,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::collections::BTreeMap;
 
 use camera::Ticket;
-pub use camera::{Frame, FRAMES_TYPE, STREAM_PORT};
+pub use camera::{Frame, Watcher, FRAMES_TYPE, STREAM_PORT};
 use serde_json::{json, Value};
 use signin::{OAuthError, Refusal, SignIn};
 
@@ -162,27 +162,35 @@ impl Door {
         })
     }
 
-    /// Whether a request may watch the live frames: by a credential, or by the link of `get-camera-link`, for clients
+    /// Who a request may watch the live frames as: by a credential, or by the link of `get-camera-link`, for clients
     /// that send no header. The refusal, when not. The firmware then asks [`Door::next_part`] for as long as it is
     /// watched.
-    pub fn admit_watcher(&self, req: &Request) -> Result<(), Response> {
+    pub fn admit_watcher(&self, req: &Request) -> Result<Watcher, Response> {
         if self.ports.camera.is_none() {
             return Err(error(404, "NOT_FOUND", "this robot has no camera working"));
         }
         let now = self.ports.clock.now_ms();
         let query = form(req.query.as_bytes());
-        let by_link = query.get("ticket").is_some_and(|t| self.ticket().redeem(now, t));
-        if by_link || self.credential_of(req, now) {
-            return Ok(());
-        }
-        Err(unauthorized(
-            "a credential is required: Authorization: Bearer <token>, or the address the query get-camera-link answers, \
-             opened once and at once",
-        ))
+        query
+            .get("ticket")
+            .and_then(|t| self.ticket().redeem(now, t))
+            .filter(|asker| self.signin().holds(now, asker))
+            .or_else(|| self.credential_of(req, now))
+            .map(Watcher)
+            .ok_or_else(|| {
+                unauthorized(
+                    "a credential is required: Authorization: Bearer <token>, or the address the query get-camera-link \
+                     answers, opened once and at once",
+                )
+            })
     }
 
-    /// The next part of the live frames, or why there is none.
-    pub fn next_part(&self) -> Result<Vec<u8>, String> {
+    /// The next part of the live frames, or why there is none: the camera gave no picture, or the credential they are
+    /// watched under has ended.
+    pub fn next_part(&self, watcher: &Watcher) -> Result<Vec<u8>, String> {
+        if !self.signin().holds(self.ports.clock.now_ms(), &watcher.0) {
+            return Err("the credential they are watched under has ended".to_string());
+        }
         let camera = self.ports.camera.as_deref().ok_or("this robot has no camera working")?;
         camera.take().map(|frame| camera::part(&frame))
     }
@@ -344,13 +352,13 @@ impl Door {
         html(page::approve(s.find(code), Some(code), now, notice.as_deref()))
     }
 
-    /// Whether the request carries a credential the robot holds. The scheme is matched without regard to case (RFC
-    /// 9110 §11.1).
-    fn credential_of(&self, req: &Request, now: u64) -> bool {
+    /// The hash of the credential the request carries, when the robot holds it. The scheme is matched without regard
+    /// to case (RFC 9110 §11.1).
+    fn credential_of(&self, req: &Request, now: u64) -> Option<[u8; 32]> {
         req.authorization
             .and_then(|a| a.trim().split_once(' '))
             .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
-            .is_some_and(|(_, token)| self.signin().admits(now, token.trim()))
+            .and_then(|(_, token)| self.signin().admits(now, token.trim()))
     }
 
     fn ticket(&self) -> MutexGuard<'_, Ticket> {
@@ -359,12 +367,12 @@ impl Door {
 
     fn queries(&self, req: &Request) -> Response {
         let now = self.ports.clock.now_ms();
-        if !self.credential_of(req, now) {
+        let Some(asker) = self.credential_of(req, now) else {
             return unauthorized(
                 "a credential is required: Authorization: Bearer <token>, obtained by the sign-in the manifest's \
                  authentication block declares",
             );
-        }
+        };
         if !matches!(req.method, "GET" | "HEAD") {
             return not_allowed("GET, HEAD", "queries are read with GET");
         }
@@ -376,7 +384,7 @@ impl Door {
             ("/queries/get-snapshot/1.0", Some(_)) => json_ok(camera::snapshot_schema().to_string()),
             ("/queries/get-snapshot", Some(camera)) => self.snapshot(camera),
             ("/queries/get-camera-link/1.0", Some(_)) => json_ok(camera::link_schema().to_string()),
-            ("/queries/get-camera-link", Some(_)) => self.camera_link(now),
+            ("/queries/get-camera-link", Some(_)) => self.camera_link(now, asker),
             _ => error(
                 404,
                 "SCHEMA_NOT_FOUND",
@@ -416,10 +424,10 @@ impl Door {
         }
     }
 
-    fn camera_link(&self, now: u64) -> Response {
-        let ticket = self.ticket().issue(now, &mut self.random());
+    fn camera_link(&self, now: u64, asker: [u8; 32]) -> Response {
+        let ticket = self.ticket().issue(now, asker, &mut self.random());
         no_store(json!({
-            "url": format!("{}:{STREAM_PORT}/camera/stream?ticket={ticket}", self.endpoint),
+            "url": format!("{}/camera/stream?ticket={ticket}", camera::frames_origin(&self.endpoint)),
             "expiresIn": camera::LINK_LIFE_S,
         }))
     }
@@ -519,7 +527,7 @@ fn manifest(name: &str, endpoint: &str, has_camera: bool) -> Value {
         manifest["best"]["services"][&camera] = json!({
             "version": "0.0.1",
             "description": "The robot's camera, live.",
-            "http": { "endpoint": format!("{endpoint}:{STREAM_PORT}") }
+            "http": { "endpoint": camera::frames_origin(endpoint) }
         });
         manifest["best"]["capabilities"].as_array_mut().unwrap().push(json!({
             "name": camera,

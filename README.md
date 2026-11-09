@@ -26,9 +26,10 @@ What it costs:
 
 | | QEMU | The board |
 |---|---|---|
-| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi and the camera) | 833 KB, 5.1% of the flash | 1.3 MB, 8.5% |
-| Internal RAM free at start | 354 KB | 283 KB |
-| … with the network up, the camera started and the door served | 311 KB | 115 KB |
+| Firmware image (ESP-IDF, lwIP, mbedTLS, the HTTPS server, the door; the board's with Wi-Fi and the camera) | 921 KB, 5.6% of the flash | 1.4 MB, 8.5% |
+| Internal RAM free at start | 355 KB | 283 KB |
+| … with the network up, the camera started and the door served | 297 KB | 115 KB |
+| … least, after TLS handshakes | 229 KB | |
 | … least, with four connections to the door and a viewer of the live frames at once | | 45 KB |
 | PSRAM used | almost none | 1.2 MB by the camera, up to 170 KB more by TLS |
 | The manifest read over a new connection, from a machine on the same network | | 1.0 to 1.3 s, the TLS handshake nearly all of it |
@@ -167,7 +168,9 @@ best query robot get-camera-link
 The link answered is `https://robot.behavioralstate.io:8443/camera/stream?ticket=...`, good once and for 30 seconds; a
 later link replaces it. A client that can send the credential opens `/camera/stream` with it, without a link. The stream
 is on a port of its own, because a server's task is held for as long as a viewer watches: the door's other answers
-never wait for it. There is one viewer at a time. Frames are never on `/events/stream`.
+never wait for it. There is one viewer at a time. Frames are never on `/events/stream`. Live frames end when the
+credential they are watched under does, by its life or by BOOT held for 10 seconds; a link's is the credential that
+asked for it, and a link from a credential since forgotten opens nothing.
 
 Measured on the board, from a machine on the same network:
 

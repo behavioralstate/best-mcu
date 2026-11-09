@@ -109,7 +109,7 @@ pub fn serve_frames(door: Arc<Door>) -> anyhow::Result<EspHttpServer<'static>> {
         let uri = req.uri().to_string();
         let (path, query) = uri.split_once('?').unwrap_or((&uri, ""));
         let authorization = req.header("Authorization").map(str::to_string);
-        let admitted = door.admit_watcher(&Request {
+        let watcher = door.admit_watcher(&Request {
             method: "GET",
             path,
             query,
@@ -117,20 +117,23 @@ pub fn serve_frames(door: Arc<Door>) -> anyhow::Result<EspHttpServer<'static>> {
             content_type: None,
             body: &[],
         });
-        if let Err(refused) = admitted {
-            let mut headers: Vec<(&str, &str)> = vec![("Content-Type", refused.content_type)];
-            headers.extend(refused.headers.iter().map(|(h, v)| (*h, v.as_str())));
-            let mut resp = req.into_response(refused.status, None, &headers)?;
-            resp.write_all(refused.body.unwrap_or_default().as_bytes())?;
-            return Ok(());
-        }
+        let watcher = match watcher {
+            Ok(watcher) => watcher,
+            Err(refused) => {
+                let mut headers: Vec<(&str, &str)> = vec![("Content-Type", refused.content_type)];
+                headers.extend(refused.headers.iter().map(|(h, v)| (*h, v.as_str())));
+                let mut resp = req.into_response(refused.status, None, &headers)?;
+                resp.write_all(refused.body.unwrap_or_default().as_bytes())?;
+                return Ok(());
+            }
+        };
         let mut resp = req.into_response(
             200,
             None,
             &[("Content-Type", FRAMES_TYPE), ("Cache-Control", "no-store")],
         )?;
-        // Until the viewer goes, or the camera stops giving frames.
-        while let Ok(part) = door.next_part() {
+        // Until the viewer goes, the credential ends, or the camera stops giving frames.
+        while let Ok(part) = door.next_part(&watcher) {
             if resp.write_all(&part).is_err() {
                 break;
             }
