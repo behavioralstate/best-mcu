@@ -4,12 +4,14 @@ How this repository is built and shipped is [`SDLC.md`](SDLC.md), the one place 
 before changing anything, and keep it the current rule when a change moves the process. What the door does is in
 [`README.md`](README.md). In short:
 
-- Open work is an issue on the Behavioralstate board (project 4 of Amarcode-Studios), filed in behavioralstate/spec
-  with the `best-robot` label, never a plan file or a `TODO`. Starting on an issue, move it to In progress on the
-  board's Status field first (`gh project item-edit`); it is Done when it closes, every "Done when" ticked.
-- The BEST spec is stable (behavioralstate/spec#37). What the door does that the spec does not mention is best-mcu's
-  own, in its README. A requirement the board cannot meet is a finding: bring the proof to the owner in the chat and
-  stop. Never file a spec issue or draft spec text on your own.
+- Open work is an issue on the Behavioralstate board (project 4 of Amarcode-Studios), never a plan file or a `TODO`:
+  behavioralstate/spec#275, or an issue filed next to it on the same board, with the problem, the outcome from the
+  agent's side, numbered decisions and a "Done when" list, and the `best-robot` label and no epic's. Starting on an
+  issue, move it to In progress on the board's Status field first (`gh project item-edit`); it is Done when it closes,
+  every "Done when" ticked.
+- The BEST spec is stable (behavioralstate/spec#37). A behaviour the spec does not mention is best-mcu's own,
+  documented in its README: never an entry on #37, an issue asking for a change to the spec, or a spec pull request.
+  A requirement that cannot be met on the board is a finding: bring the proof to the owner in the chat and stop.
 - `crates/door` knows nothing of the board: every answer is decided from the request and the ports it is given, and
   its tests run on any machine against fakes (`cargo test`). The firmware is a thin adapter, proven in QEMU where QEMU
   emulates it and on the board by hand. Skills, never motors; the stop is the BOOT button, never only a command.
