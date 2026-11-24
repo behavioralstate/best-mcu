@@ -48,7 +48,7 @@ fn about(r: &Registration, now: u64) -> String {
             "<form method=post action=approve><input type=hidden name=code value=\"{code}\"><button name=action \
              value=approve>Approve</button><button name=action value=deny>Deny</button></form><p>Approve, then \
              hold the robot's BOOT button for 3 seconds and let go, within {ARMED_FOR_S} seconds: the hold is what \
-             approves.</p>"
+             approves, and it approves the code armed when the button goes down.</p>"
         ),
         State::Armed { until_ms } => format!(
             "<p><b>Hold the robot's BOOT button for 3 seconds now, then let go</b>: {} seconds left. This page shows the outcome when it \

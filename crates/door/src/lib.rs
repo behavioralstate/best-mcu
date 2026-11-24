@@ -190,7 +190,8 @@ impl Door {
 
     fn what_the_press_did(&self, held_ms: u64) -> Pressed {
         if held_ms >= APPROVE_AFTER_MS {
-            return self.press().map_or(Pressed::NothingApproved, Pressed::Approved);
+            let approved = self.signin().press(self.ports.clock.now_ms());
+            return approved.map_or(Pressed::NothingApproved, Pressed::Approved);
         }
         if self.this_press_stopped() {
             return Pressed::Stopped;
@@ -202,9 +203,13 @@ impl Door {
         }
     }
 
-    /// The robot's button was held long enough: the code armed on the page, if any, is approved. Returns that code.
+    /// A hold whose going down and letting go fall at this instant: the code armed on the page, if any, is approved.
+    /// Returns that code.
+    #[cfg(test)]
     pub(crate) fn press(&self) -> Option<String> {
-        self.signin().press(self.ports.clock.now_ms())
+        let (mut s, now) = (self.signin(), self.ports.clock.now_ms());
+        s.button_down(now);
+        s.press(now)
     }
 
     /// Every credential is forgotten, kept ones included: each agent signs in again. When the vault cannot be

@@ -124,7 +124,9 @@ A board without a name is reached by its address instead, with a self-signed cer
 The manifest declares the device flow (RFC 8628): the agent asks the robot for a code and gives the person a link to
 the robot's own page, `/approve?code=...`, which shows who asks and the code. The person checks the code against what
 the agent shows and clicks Approve, then holds the robot's BOOT button for 3 seconds and lets go, within 30 seconds of the
-click: the hold is what approves, so only someone at the robot can let an agent in. A short press approves nothing, because it is
+click: the hold is what approves, so only someone at the robot can let an agent in. It approves the code armed when the
+button went down, and only it: not a code armed while it is held, even if the person's arming runs out during the hold,
+and not one denied meanwhile. A short press approves nothing, because it is
 [the stop](#the-servo), and anyone who can reach the robot can arm a code. Deny refuses it. With best-cli:
 
 ```bash

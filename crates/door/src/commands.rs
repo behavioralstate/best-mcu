@@ -248,8 +248,9 @@ pub(crate) fn capabilities(service: &str) -> [Value; 2] {
 
 impl Door {
     /// The robot's button has gone down: a head holding a position lets go at once, however long the press turns out
-    /// to be. Whether it did.
+    /// to be, and the code armed now is the one a hold may approve. Whether the head let go.
     pub fn button_down(&self) -> bool {
+        self.signin().button_down(self.ports.clock.now_ms());
         let Some(head) = self.ports.head.as_deref() else {
             return false;
         };
@@ -266,6 +267,7 @@ impl Door {
 
     /// The robot's button has come up.
     pub fn button_up(&self) {
+        self.signin().button_up();
         self.ledger().button_is_down = false;
     }
 

@@ -108,6 +108,8 @@ pub enum Refusal {
 pub struct SignIn {
     registrations: Vec<Registration>,
     credentials: Vec<Credential>,
+    /// The code armed when the robot's button went down: the one code its hold may approve.
+    armed_at_down: Option<String>,
 }
 
 impl SignIn {
@@ -125,8 +127,8 @@ impl SignIn {
             })
             .collect();
         Self {
-            registrations: Vec::new(),
             credentials,
+            ..Self::default()
         }
     }
 
@@ -327,13 +329,30 @@ impl SignIn {
         Ok(())
     }
 
-    /// The robot's button was held: the armed code, if one is, is approved. Returns its user code.
+    /// The robot's button went down: the code armed now, if one is, is the one its hold may approve. A code armed
+    /// while the button is down is not: whoever arms it cannot be the person holding it.
+    pub fn button_down(&mut self, now: u64) {
+        self.armed_at_down = self
+            .registrations
+            .iter()
+            .find(|r| matches!(r.state_at(now), State::Armed { .. }))
+            .map(|r| r.user_code.clone());
+    }
+
+    /// The robot's button came up without approving.
+    pub fn button_up(&mut self) {
+        self.armed_at_down = None;
+    }
+
+    /// The robot's button was held: the code armed when it went down is approved, even if its arming ran out during
+    /// the hold, unless it was denied, taken back or expired since. Returns its user code.
     pub fn press(&mut self, now: u64) -> Option<String> {
+        let code = self.armed_at_down.take()?;
         let full = self.held(now) >= CAPACITY;
         let r = self
             .registrations
             .iter_mut()
-            .find(|r| matches!(r.state_at(now), State::Armed { .. }))?;
+            .find(|r| r.user_code == code && matches!(r.state, State::Armed { .. }) && !r.expired_at(now))?;
         if full {
             return None;
         }

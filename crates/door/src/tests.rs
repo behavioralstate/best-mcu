@@ -434,6 +434,71 @@ fn an_armed_code_waits_thirty_seconds_and_only_one_is_armed_at_a_time() {
 }
 
 #[test]
+fn a_hold_approves_the_code_armed_when_the_button_went_down_and_not_one_armed_during_it() {
+    let board = Board::default();
+    let door = board.door();
+    let (mine, theirs) = (register(&door, "client_id=mine"), register(&door, "client_id=theirs"));
+    approve(&door, mine["user_code"].as_str().unwrap());
+    board.wait(signin::ARMED_FOR_S - 2);
+    door.button_down();
+    board.wait(3);
+    // My arming ran out while I held the button, and someone else armed theirs.
+    let page = approve(&door, theirs["user_code"].as_str().unwrap()).body.unwrap();
+    assert!(page.contains("Hold the robot's BOOT button"), "{page}");
+    assert_eq!(
+        door.released_after(3_000),
+        Pressed::Approved(mine["user_code"].as_str().unwrap().to_string())
+    );
+    board.wait(5);
+    assert_eq!(poll(&door, mine["device_code"].as_str().unwrap()).status, 200);
+    assert_eq!(
+        json_of(&poll(&door, theirs["device_code"].as_str().unwrap()))["error"],
+        "authorization_pending"
+    );
+}
+
+#[test]
+fn a_hold_begun_with_nothing_armed_approves_nothing_armed_while_it_lasts() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=theirs");
+    door.button_down();
+    board.wait(1);
+    approve(&door, reg["user_code"].as_str().unwrap());
+    board.wait(2);
+    assert_eq!(door.released_after(3_000), Pressed::NothingApproved);
+    board.wait(5);
+    assert_eq!(
+        json_of(&poll(&door, reg["device_code"].as_str().unwrap()))["error"],
+        "authorization_pending"
+    );
+}
+
+#[test]
+fn a_code_denied_during_the_hold_is_not_approved_by_it() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=best");
+    let user = reg["user_code"].as_str().unwrap();
+    approve(&door, user);
+    door.button_down();
+    door.answer(&post_form("/approve", &format!("code={user}&action=deny")));
+    assert_eq!(door.released_after(3_000), Pressed::NothingApproved);
+}
+
+#[test]
+fn a_short_press_forgets_the_code_it_went_down_on() {
+    let board = Board::default();
+    let door = board.door();
+    let reg = register(&door, "client_id=best");
+    approve(&door, reg["user_code"].as_str().unwrap());
+    door.button_down();
+    assert_eq!(door.released_after(100), Pressed::NoHead);
+    // A hold that never went down, as only a test can make, approves nothing.
+    assert_eq!(door.released_after(3_000), Pressed::NothingApproved);
+}
+
+#[test]
 fn the_robot_holds_eight_credentials_and_says_how_to_free_them() {
     let board = Board::default();
     let door = board.door();
@@ -1317,6 +1382,7 @@ fn a_short_press_stops_the_head_and_approves_no_sign_in_armed_from_the_network()
     board.wait(5);
     assert_ne!(poll(&door, device).status, 200, "a short press approved a code");
 
+    assert!(!door.button_down());
     assert_eq!(
         door.released_after(APPROVE_AFTER_MS),
         Pressed::Approved(user.to_string())
